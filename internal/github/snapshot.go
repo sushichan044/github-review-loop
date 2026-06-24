@@ -81,7 +81,15 @@ func applyReviewRequestedEvent(
 	e *reviewRequestedEvent,
 	policies []reviewloop.Policy,
 ) {
+	// Prefer User login, then Bot login, then Mannequin login.
+	// Team review requests have no single login identity and are skipped.
 	login := e.RequestedReviewer.UserLogin
+	if login == "" {
+		login = e.RequestedReviewer.BotLogin
+	}
+	if login == "" {
+		login = e.RequestedReviewer.MannequinLogin
+	}
 	if login == "" {
 		// Team review request — not attributable to a single login identity.
 		return

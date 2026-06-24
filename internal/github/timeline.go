@@ -44,6 +44,10 @@ type requestedReviewerUnion struct {
 	UserLogin string
 	// Team reviewer
 	TeamSlug string
+	// Bot reviewer (e.g. github-copilot, github-app bots)
+	BotLogin string
+	// Mannequin reviewer
+	MannequinLogin string
 }
 
 type pullRequestReviewEvent struct {
@@ -90,6 +94,12 @@ type prTimelineQueryStruct struct {
 							Team struct {
 								Slug string
 							} `graphql:"... on Team"`
+							Bot struct {
+								Login string
+							} `graphql:"... on Bot"`
+							Mannequin struct {
+								Login string
+							} `graphql:"... on Mannequin"`
 						}
 						CreatedAt graphqlTime
 					} `graphql:"... on ReviewRequestedEvent"`
@@ -182,6 +192,12 @@ func convertTimelineNode(n struct {
 			Team struct {
 				Slug string
 			} `graphql:"... on Team"`
+			Bot struct {
+				Login string
+			} `graphql:"... on Bot"`
+			Mannequin struct {
+				Login string
+			} `graphql:"... on Mannequin"`
 		}
 		CreatedAt graphqlTime
 	} `graphql:"... on ReviewRequestedEvent"`
@@ -224,8 +240,10 @@ func convertTimelineNode(n struct {
 	case "ReviewRequestedEvent":
 		node.ReviewRequestedEvent = &reviewRequestedEvent{
 			RequestedReviewer: requestedReviewerUnion{
-				UserLogin: n.ReviewRequestedEvent.RequestedReviewer.User.Login,
-				TeamSlug:  n.ReviewRequestedEvent.RequestedReviewer.Team.Slug,
+				UserLogin:      n.ReviewRequestedEvent.RequestedReviewer.User.Login,
+				TeamSlug:       n.ReviewRequestedEvent.RequestedReviewer.Team.Slug,
+				BotLogin:       n.ReviewRequestedEvent.RequestedReviewer.Bot.Login,
+				MannequinLogin: n.ReviewRequestedEvent.RequestedReviewer.Mannequin.Login,
 			},
 			CreatedAt: n.ReviewRequestedEvent.CreatedAt.Time,
 		}

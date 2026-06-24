@@ -12,8 +12,10 @@ type FakeReview struct {
 
 // FakeReviewRequest is test data for a ReviewRequestedEvent timeline node.
 type FakeReviewRequest struct {
-	UserLogin string
-	CreatedAt time.Time
+	UserLogin      string
+	BotLogin       string
+	MannequinLogin string
+	CreatedAt      time.Time
 }
 
 // FakeIssueComment is test data for an IssueComment timeline node.
@@ -50,6 +52,12 @@ func InjectTimeline(
 
 	// Each fake item produces one node with the appropriate typename set and
 	// all other inline-fragment fields left at zero values.
+	//
+	// WARNING: this nodeType must stay structurally identical to the anonymous
+	// node struct in prTimelineQueryStruct (timeline.go). The two types are
+	// compared by structural identity when InjectTimeline casts q to
+	// *prTimelineQueryStruct and assigns Nodes. If you add or remove fields
+	// in timeline.go, mirror that change here.
 	type nodeType = struct {
 		Typename string `graphql:"__typename"`
 
@@ -61,6 +69,12 @@ func InjectTimeline(
 				Team struct {
 					Slug string
 				} `graphql:"... on Team"`
+				Bot struct {
+					Login string
+				} `graphql:"... on Bot"`
+				Mannequin struct {
+					Login string
+				} `graphql:"... on Mannequin"`
 			}
 			CreatedAt graphqlTime
 		} `graphql:"... on ReviewRequestedEvent"`
@@ -114,6 +128,8 @@ func InjectTimeline(
 		var n nodeType
 		n.Typename = "ReviewRequestedEvent"
 		n.ReviewRequestedEvent.RequestedReviewer.User.Login = rr.UserLogin
+		n.ReviewRequestedEvent.RequestedReviewer.Bot.Login = rr.BotLogin
+		n.ReviewRequestedEvent.RequestedReviewer.Mannequin.Login = rr.MannequinLogin
 		n.ReviewRequestedEvent.CreatedAt = graphqlTime{rr.CreatedAt}
 		nodes = append(nodes, n)
 	}

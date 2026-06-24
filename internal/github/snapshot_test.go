@@ -285,6 +285,63 @@ func TestFetchSnapshot_UnknownReviewerDropped(t *testing.T) {
 	assert.Empty(t, snapshot.Reviews)
 }
 
+func TestFetchSnapshot_BotTriggerAttribution_Copilot(t *testing.T) {
+	t.Parallel()
+
+	at := time.Date(2024, 4, 1, 9, 0, 0, 0, time.UTC)
+
+	fq := newFakeQuerier()
+	fq.on("PRTimeline", timelineFiller("headOID", nil, []fakeReviewRequest{
+		{BotLogin: "copilot-pull-request-reviewer", CreatedAt: at},
+	}, nil))
+	fq.on("PRReviewThreads", emptyThreadsFiller)
+
+	policies := []reviewloop.Policy{
+		{Identity: reviewloop.ReviewerIdentity{Type: reviewloop.ReviewerTypeGitHubCopilot}},
+	}
+
+	snapshot, err := github.FetchSnapshot(
+		context.Background(),
+		buildClient(fq),
+		github.PR{Owner: "o", Repo: "r", Number: 1},
+		policies,
+	)
+	require.NoError(t, err)
+	require.Len(t, snapshot.Triggers, 1)
+	assert.Equal(t, reviewloop.ReviewerTypeGitHubCopilot, snapshot.Triggers[0].Reviewer.Type)
+	assert.Equal(t, at, snapshot.Triggers[0].At)
+}
+
+func TestFetchSnapshot_BotTriggerAttribution_GitHubApp(t *testing.T) {
+	t.Parallel()
+
+	at := time.Date(2024, 4, 2, 10, 0, 0, 0, time.UTC)
+
+	fq := newFakeQuerier()
+	fq.on("PRTimeline", timelineFiller("headOID", nil, []fakeReviewRequest{
+		{BotLogin: "my-bot[bot]", CreatedAt: at},
+	}, nil))
+	fq.on("PRReviewThreads", emptyThreadsFiller)
+
+	policies := []reviewloop.Policy{
+		{
+			Identity: reviewloop.ReviewerIdentity{Type: reviewloop.ReviewerTypeGitHubApp, Name: "my-bot"},
+		},
+	}
+
+	snapshot, err := github.FetchSnapshot(
+		context.Background(),
+		buildClient(fq),
+		github.PR{Owner: "o", Repo: "r", Number: 1},
+		policies,
+	)
+	require.NoError(t, err)
+	require.Len(t, snapshot.Triggers, 1)
+	assert.Equal(t, reviewloop.ReviewerTypeGitHubApp, snapshot.Triggers[0].Reviewer.Type)
+	assert.Equal(t, "my-bot", snapshot.Triggers[0].Reviewer.Name)
+	assert.Equal(t, at, snapshot.Triggers[0].At)
+}
+
 func TestFetchSnapshot_HeadCommitOID(t *testing.T) {
 	t.Parallel()
 
