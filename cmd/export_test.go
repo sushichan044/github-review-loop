@@ -8,15 +8,17 @@ import (
 	"github.com/sushichan044/github-review-loop/internal/config"
 	"github.com/sushichan044/github-review-loop/internal/github"
 	"github.com/sushichan044/github-review-loop/internal/output"
+	"github.com/sushichan044/github-review-loop/internal/reviewloop"
 )
 
 // TestDeps is the public surface for injecting test doubles into cmd tests.
 type TestDeps struct {
-	Resolver   github.PRResolver
-	Client     *github.Client
-	Triggerer  *github.Triggerer
-	LoadConfig func() (*config.Config, error)
-	Out        io.Writer
+	Resolver           github.PRResolver
+	FetchSnapshot      func(ctx context.Context, pr github.PR, policies []reviewloop.Policy) (reviewloop.Snapshot, error)
+	UnresolvedComments func(ctx context.Context, pr github.PR, policies []reviewloop.Policy) (map[string][]output.CommentView, error)
+	Triggerer          *github.Triggerer
+	LoadConfig         func() (*config.Config, error)
+	Out                io.Writer
 }
 
 func toDeps(td TestDeps) deps {
@@ -28,11 +30,12 @@ func toDeps(td TestDeps) deps {
 	}
 
 	return deps{
-		resolver:   td.Resolver,
-		client:     td.Client,
-		triggerer:  triggerer,
-		loadConfig: td.LoadConfig,
-		out:        td.Out,
+		resolver:           td.Resolver,
+		fetchSnapshot:      td.FetchSnapshot,
+		unresolvedComments: td.UnresolvedComments,
+		triggerer:          triggerer,
+		loadConfig:         td.LoadConfig,
+		out:                td.Out,
 	}
 }
 

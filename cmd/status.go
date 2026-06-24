@@ -7,7 +7,6 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/sushichan044/github-review-loop/internal/config"
-	"github.com/sushichan044/github-review-loop/internal/github"
 	"github.com/sushichan044/github-review-loop/internal/output"
 )
 
@@ -60,7 +59,7 @@ func runStatus(ctx context.Context, d deps, resolveFormat formatResolver, args [
 		return fmt.Errorf("could not fetch PR state: %w", err)
 	}
 
-	unresolvedByKey, err := github.UnresolvedThreadComments(ctx, d.client, pr, policies)
+	unresolvedByKey, err := d.unresolvedComments(ctx, pr, policies)
 	if err != nil {
 		return fmt.Errorf("could not fetch unresolved comments: %w", err)
 	}

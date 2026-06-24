@@ -1,3 +1,4 @@
+//nolint:testpackage // White-box test helpers: must access unexported query structs (prTimelineQueryStruct, reviewThreadsQueryStruct).
 package github
 
 import "time"
@@ -33,11 +34,9 @@ type FakeThread struct {
 	IsResolved  bool
 }
 
-// InjectTimeline directly sets fields on a *prTimelineQueryStruct so that
+// injectTimeline directly sets fields on a *prTimelineQueryStruct so that
 // fakeQuerier tests can populate the query struct without JSON marshaling.
-//
-//nolint:funlen
-func InjectTimeline(
+func injectTimeline(
 	q any,
 	headOID string,
 	reviews []FakeReview,
@@ -51,7 +50,6 @@ func InjectTimeline(
 	query.Repository.PullRequest.HeadRefOid = headOID
 
 	totalCount := len(reviews) + len(reqEvents) + len(comments)
-	//nolint:gosec // item counts won't overflow int32
 	query.Repository.PullRequest.TimelineItems.TotalCount = int32(totalCount)
 
 	// nodeType must stay structurally identical to the anonymous node in prTimelineQueryStruct.
@@ -144,8 +142,8 @@ func InjectTimeline(
 	query.Repository.PullRequest.TimelineItems.Nodes = nodes
 }
 
-// InjectThreads directly sets fields on a *reviewThreadsQueryStruct.
-func InjectThreads(q any, threads []FakeThread) {
+// injectThreads directly sets fields on a *reviewThreadsQueryStruct.
+func injectThreads(q any, threads []FakeThread) {
 	query, ok := q.(*reviewThreadsQueryStruct)
 	if !ok {
 		return

@@ -19,11 +19,12 @@ type configLoader func() (*config.Config, error)
 // deps holds all injected dependencies for the CLI commands.
 // Tests substitute fakes; production uses the real implementations.
 type deps struct {
-	resolver   github.PRResolver
-	client     *github.Client
-	triggerer  *github.Triggerer
-	loadConfig configLoader
-	out        io.Writer
+	resolver           github.PRResolver
+	fetchSnapshot      func(ctx context.Context, pr github.PR, policies []reviewloop.Policy) (reviewloop.Snapshot, error)
+	unresolvedComments func(ctx context.Context, pr github.PR, policies []reviewloop.Policy) (map[string][]output.CommentView, error)
+	triggerer          *github.Triggerer
+	loadConfig         configLoader
+	out                io.Writer
 }
 
 // formatResolver returns the [output.Format] to use, resolving the --format flag.
@@ -72,8 +73,13 @@ func Execute(w io.Writer) error {
 	}
 
 	d := deps{
-		resolver:   github.GHPRResolver{},
-		client:     client,
+		resolver: github.GHPRResolver{},
+		fetchSnapshot: func(ctx context.Context, pr github.PR, policies []reviewloop.Policy) (reviewloop.Snapshot, error) {
+			return github.FetchSnapshot(ctx, client, pr, policies)
+		},
+		unresolvedComments: func(ctx context.Context, pr github.PR, policies []reviewloop.Policy) (map[string][]output.CommentView, error) {
+			return github.UnresolvedThreadComments(ctx, client, pr, policies)
+		},
 		triggerer:  github.NewTriggerer(),
 		loadConfig: config.Load,
 		out:        w,
@@ -127,7 +133,7 @@ func fetchEvaluate(
 	d deps,
 	policies []reviewloop.Policy,
 ) (reviewloop.LoopState, error) {
-	snapshot, err := github.FetchSnapshot(ctx, d.client, pr, policies)
+	snapshot, err := d.fetchSnapshot(ctx, pr, policies)
 	if err != nil {
 		return reviewloop.LoopState{}, err
 	}

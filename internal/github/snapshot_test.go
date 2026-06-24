@@ -70,8 +70,6 @@ func timelineFiller(
 	comments []fakeIssueComment,
 ) func(q any) error {
 	return func(q any) error {
-		// Use github package's exported FillTimeline helper if available,
-		// otherwise use a type map approach via github.InjectTimeline.
 		github.InjectTimeline(q, headOID, reviews, reqEvents, comments)
 		return nil
 	}
@@ -86,16 +84,16 @@ func threadsFiller(threads []fakeThread) func(q any) error {
 }
 
 // fakeReview is test data for a PullRequestReview node.
-type fakeReview = github.FakeReview
+type fakeReview = github.ExportedFakeReview
 
 // fakeReviewRequest is test data for a ReviewRequestedEvent node.
-type fakeReviewRequest = github.FakeReviewRequest
+type fakeReviewRequest = github.ExportedFakeReviewRequest
 
 // fakeIssueComment is test data for an IssueComment node.
-type fakeIssueComment = github.FakeIssueComment
+type fakeIssueComment = github.ExportedFakeIssueComment
 
 // fakeThread is test data for a review thread.
-type fakeThread = github.FakeThread
+type fakeThread = github.ExportedFakeThread
 
 // ---------------------------------------------------------------------------
 // Tests

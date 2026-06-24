@@ -15,6 +15,8 @@ import (
 	"github.com/sushichan044/github-review-loop/cmd"
 	"github.com/sushichan044/github-review-loop/internal/config"
 	"github.com/sushichan044/github-review-loop/internal/github"
+	"github.com/sushichan044/github-review-loop/internal/output"
+	"github.com/sushichan044/github-review-loop/internal/reviewloop"
 )
 
 // ---------------------------------------------------------------------------
@@ -31,28 +33,6 @@ type fakePRResolver struct {
 
 func (f *fakePRResolver) CurrentPR(_ context.Context) (string, string, int, error) {
 	return f.owner, f.repo, f.number, f.err
-}
-
-// fakeQuerier implements github.GraphQLQuerier.
-type fakeQuerier struct {
-	handlers map[string]func(q any) error
-}
-
-func newFakeQuerier() *fakeQuerier {
-	return &fakeQuerier{handlers: make(map[string]func(q any) error)}
-}
-
-func (f *fakeQuerier) on(name string, fn func(q any) error) {
-	f.handlers[name] = fn
-}
-
-func (f *fakeQuerier) Query(name string, q any, _ map[string]any) error {
-	fn, ok := f.handlers[name]
-	if !ok {
-		return fmt.Errorf("fakeQuerier: unexpected query %q", name)
-	}
-
-	return fn(q)
 }
 
 // fakeExec implements the ghExecFunc signature used by Triggerer.
@@ -100,32 +80,6 @@ loops:
 	return cfg
 }
 
-// timelineFiller injects timeline data into a PRTimeline query struct.
-// IssueComment events are omitted here because no cmd test needs them.
-func timelineFiller(
-	headOID string,
-	reviews []github.FakeReview,
-	reqEvents []github.FakeReviewRequest,
-) func(q any) error {
-	return func(q any) error {
-		github.InjectTimeline(q, headOID, reviews, reqEvents, nil)
-		return nil
-	}
-}
-
-// threadsFiller injects thread data into a PRReviewThreads query struct.
-func threadsFiller(threads []github.FakeThread) func(q any) error {
-	return func(q any) error {
-		github.InjectThreads(q, threads)
-		return nil
-	}
-}
-
-func emptyThreadsFiller(q any) error {
-	github.InjectThreads(q, nil)
-	return nil
-}
-
 // ---------------------------------------------------------------------------
 // status command tests
 // ---------------------------------------------------------------------------
@@ -135,24 +89,27 @@ func TestStatus_HumanFormat(t *testing.T) {
 
 	at := time.Date(2024, 6, 1, 12, 0, 0, 0, time.UTC)
 
-	fq := newFakeQuerier()
-	fq.on("PRTimeline", timelineFiller(
-		"commitABC",
-		[]github.FakeReview{
-			{AuthorLogin: "alice", State: "APPROVED", CommitOid: "commitABC", SubmittedAt: at},
+	aliceIdentity := reviewloop.ReviewerIdentity{Type: reviewloop.ReviewerTypeUser, Name: "alice"}
+	copilotIdentity := reviewloop.ReviewerIdentity{Type: reviewloop.ReviewerTypeGitHubCopilot}
+
+	snapshot := reviewloop.Snapshot{
+		HeadCommitOID: "commitABC",
+		Triggers: []reviewloop.TriggerAction{
+			{Reviewer: aliceIdentity, At: at.Add(-time.Hour)},
 		},
-		[]github.FakeReviewRequest{
-			{UserLogin: "alice", CreatedAt: at.Add(-time.Hour)},
+		Reviews: []reviewloop.Review{
+			{Reviewer: aliceIdentity, State: reviewloop.ReviewStateApproved, CommitOID: "commitABC", At: at},
 		},
-	))
-	fq.on("PRReviewThreads", threadsFiller([]github.FakeThread{
-		{
-			AuthorLogin: "copilot",
-			Body:        "Please fix the import",
-			URL:         "https://github.com/o/r/pull/1#r1",
-			IsResolved:  false,
+		Threads: []reviewloop.Thread{
+			{Reviewer: copilotIdentity, Resolved: false},
 		},
-	}))
+	}
+
+	unresolvedComments := map[string][]output.CommentView{
+		"github-copilot": {
+			{Author: "copilot", Body: "Please fix the import", URL: "https://github.com/o/r/pull/1#r1"},
+		},
+	}
 
 	resolver := &fakePRResolver{owner: "myorg", repo: "myrepo", number: 1}
 	cfg := minimalConfig("myorg", "myrepo")
@@ -162,8 +119,13 @@ func TestStatus_HumanFormat(t *testing.T) {
 	err := cmd.RunStatusForTest(
 		context.Background(),
 		cmd.TestDeps{
-			Resolver:   resolver,
-			Client:     github.NewClientWithQuerier(fq),
+			Resolver: resolver,
+			FetchSnapshot: func(_ context.Context, _ github.PR, _ []reviewloop.Policy) (reviewloop.Snapshot, error) {
+				return snapshot, nil
+			},
+			UnresolvedComments: func(_ context.Context, _ github.PR, _ []reviewloop.Policy) (map[string][]output.CommentView, error) {
+				return unresolvedComments, nil
+			},
 			LoadConfig: func() (*config.Config, error) { return cfg, nil },
 			Out:        &buf,
 		},
@@ -188,9 +150,9 @@ func TestStatus_AgentFormat_BackgroundShellHint(t *testing.T) {
 	t.Parallel()
 
 	// Copilot with no review yet and no head commit → CanRerequest = true (initial request).
-	fq := newFakeQuerier()
-	fq.on("PRTimeline", timelineFiller("commitXYZ", nil, nil))
-	fq.on("PRReviewThreads", emptyThreadsFiller)
+	snapshot := reviewloop.Snapshot{
+		HeadCommitOID: "commitXYZ",
+	}
 
 	resolver := &fakePRResolver{owner: "myorg", repo: "myrepo", number: 2}
 	cfg := minimalConfig("myorg", "myrepo")
@@ -200,8 +162,13 @@ func TestStatus_AgentFormat_BackgroundShellHint(t *testing.T) {
 	err := cmd.RunStatusForTest(
 		context.Background(),
 		cmd.TestDeps{
-			Resolver:   resolver,
-			Client:     github.NewClientWithQuerier(fq),
+			Resolver: resolver,
+			FetchSnapshot: func(_ context.Context, _ github.PR, _ []reviewloop.Policy) (reviewloop.Snapshot, error) {
+				return snapshot, nil
+			},
+			UnresolvedComments: func(_ context.Context, _ github.PR, _ []reviewloop.Policy) (map[string][]output.CommentView, error) {
+				return map[string][]output.CommentView{}, nil
+			},
 			LoadConfig: func() (*config.Config, error) { return cfg, nil },
 			Out:        &buf,
 		},
@@ -219,9 +186,9 @@ func TestStatus_AgentFormat_BackgroundShellHint(t *testing.T) {
 func TestStatus_AgentFormat_NoBackgroundShellHintInHuman(t *testing.T) {
 	t.Parallel()
 
-	fq := newFakeQuerier()
-	fq.on("PRTimeline", timelineFiller("commitXYZ", nil, nil))
-	fq.on("PRReviewThreads", emptyThreadsFiller)
+	snapshot := reviewloop.Snapshot{
+		HeadCommitOID: "commitXYZ",
+	}
 
 	resolver := &fakePRResolver{owner: "myorg", repo: "myrepo", number: 3}
 	cfg := minimalConfig("myorg", "myrepo")
@@ -231,8 +198,13 @@ func TestStatus_AgentFormat_NoBackgroundShellHintInHuman(t *testing.T) {
 	err := cmd.RunStatusForTest(
 		context.Background(),
 		cmd.TestDeps{
-			Resolver:   resolver,
-			Client:     github.NewClientWithQuerier(fq),
+			Resolver: resolver,
+			FetchSnapshot: func(_ context.Context, _ github.PR, _ []reviewloop.Policy) (reviewloop.Snapshot, error) {
+				return snapshot, nil
+			},
+			UnresolvedComments: func(_ context.Context, _ github.PR, _ []reviewloop.Policy) (map[string][]output.CommentView, error) {
+				return map[string][]output.CommentView{}, nil
+			},
 			LoadConfig: func() (*config.Config, error) { return cfg, nil },
 			Out:        &buf,
 		},
@@ -255,22 +227,23 @@ func TestRequest_FiresOnlyCanRerequest(t *testing.T) {
 
 	at := time.Date(2024, 6, 1, 12, 0, 0, 0, time.UTC)
 
+	aliceIdentity := reviewloop.ReviewerIdentity{Type: reviewloop.ReviewerTypeUser, Name: "alice"}
+	copilotIdentity := reviewloop.ReviewerIdentity{Type: reviewloop.ReviewerTypeGitHubCopilot}
+
 	// alice: reviewed at head → CanRerequest = false (no new commit since last review)
 	// copilot: has unresolved thread (not goal-met) and no review yet → CanRerequest = true
-	fq := newFakeQuerier()
-	fq.on("PRTimeline", timelineFiller(
-		"headCommit",
-		[]github.FakeReview{
-			{AuthorLogin: "alice", State: "APPROVED", CommitOid: "headCommit", SubmittedAt: at},
+	snapshot := reviewloop.Snapshot{
+		HeadCommitOID: "headCommit",
+		Triggers: []reviewloop.TriggerAction{
+			{Reviewer: aliceIdentity, At: at.Add(-time.Hour)},
 		},
-		[]github.FakeReviewRequest{
-			{UserLogin: "alice", CreatedAt: at.Add(-time.Hour)},
+		Reviews: []reviewloop.Review{
+			{Reviewer: aliceIdentity, State: reviewloop.ReviewStateApproved, CommitOID: "headCommit", At: at},
 		},
-	))
-	// Give copilot an unresolved thread so GoalMet=false (keeps it Active).
-	fq.on("PRReviewThreads", threadsFiller([]github.FakeThread{
-		{AuthorLogin: "copilot", Body: "Fix this", URL: "", IsResolved: false},
-	}))
+		Threads: []reviewloop.Thread{
+			{Reviewer: copilotIdentity, Resolved: false},
+		},
+	}
 
 	exec := &captureExec{}
 	triggerer := github.NewTriggererWithExec(exec.exec)
@@ -283,8 +256,13 @@ func TestRequest_FiresOnlyCanRerequest(t *testing.T) {
 	err := cmd.RunRequestForTest(
 		context.Background(),
 		cmd.TestDeps{
-			Resolver:   resolver,
-			Client:     github.NewClientWithQuerier(fq),
+			Resolver: resolver,
+			FetchSnapshot: func(_ context.Context, _ github.PR, _ []reviewloop.Policy) (reviewloop.Snapshot, error) {
+				return snapshot, nil
+			},
+			UnresolvedComments: func(_ context.Context, _ github.PR, _ []reviewloop.Policy) (map[string][]output.CommentView, error) {
+				return map[string][]output.CommentView{}, nil
+			},
 			Triggerer:  triggerer,
 			LoadConfig: func() (*config.Config, error) { return cfg, nil },
 			Out:        &buf,
@@ -310,9 +288,9 @@ func TestRequest_FiresOnlyCanRerequest(t *testing.T) {
 func TestRequest_ReviewerFlag_TargetsExactlyOne(t *testing.T) {
 	t.Parallel()
 
-	fq := newFakeQuerier()
-	fq.on("PRTimeline", timelineFiller("headCommit", nil, nil))
-	fq.on("PRReviewThreads", emptyThreadsFiller)
+	snapshot := reviewloop.Snapshot{
+		HeadCommitOID: "headCommit",
+	}
 
 	exec := &captureExec{}
 	triggerer := github.NewTriggererWithExec(exec.exec)
@@ -325,8 +303,13 @@ func TestRequest_ReviewerFlag_TargetsExactlyOne(t *testing.T) {
 	err := cmd.RunRequestForTest(
 		context.Background(),
 		cmd.TestDeps{
-			Resolver:   resolver,
-			Client:     github.NewClientWithQuerier(fq),
+			Resolver: resolver,
+			FetchSnapshot: func(_ context.Context, _ github.PR, _ []reviewloop.Policy) (reviewloop.Snapshot, error) {
+				return snapshot, nil
+			},
+			UnresolvedComments: func(_ context.Context, _ github.PR, _ []reviewloop.Policy) (map[string][]output.CommentView, error) {
+				return map[string][]output.CommentView{}, nil
+			},
 			Triggerer:  triggerer,
 			LoadConfig: func() (*config.Config, error) { return cfg, nil },
 			Out:        &buf,
@@ -352,18 +335,18 @@ func TestRequest_BlockedReviewer_PrintsNoOpReason(t *testing.T) {
 
 	at := time.Date(2024, 6, 1, 12, 0, 0, 0, time.UTC)
 
+	aliceIdentity := reviewloop.ReviewerIdentity{Type: reviewloop.ReviewerTypeUser, Name: "alice"}
+
 	// alice reviewed the current head → blocked by "no new commit since last review"
-	fq := newFakeQuerier()
-	fq.on("PRTimeline", timelineFiller(
-		"headCommit",
-		[]github.FakeReview{
-			{AuthorLogin: "alice", State: "CHANGES_REQUESTED", CommitOid: "headCommit", SubmittedAt: at},
+	snapshot := reviewloop.Snapshot{
+		HeadCommitOID: "headCommit",
+		Triggers: []reviewloop.TriggerAction{
+			{Reviewer: aliceIdentity, At: at.Add(-time.Hour)},
 		},
-		[]github.FakeReviewRequest{
-			{UserLogin: "alice", CreatedAt: at.Add(-time.Hour)},
+		Reviews: []reviewloop.Review{
+			{Reviewer: aliceIdentity, State: reviewloop.ReviewStateChangesRequested, CommitOID: "headCommit", At: at},
 		},
-	))
-	fq.on("PRReviewThreads", emptyThreadsFiller)
+	}
 
 	exec := &captureExec{}
 	triggerer := github.NewTriggererWithExec(exec.exec)
@@ -376,8 +359,13 @@ func TestRequest_BlockedReviewer_PrintsNoOpReason(t *testing.T) {
 	err := cmd.RunRequestForTest(
 		context.Background(),
 		cmd.TestDeps{
-			Resolver:   resolver,
-			Client:     github.NewClientWithQuerier(fq),
+			Resolver: resolver,
+			FetchSnapshot: func(_ context.Context, _ github.PR, _ []reviewloop.Policy) (reviewloop.Snapshot, error) {
+				return snapshot, nil
+			},
+			UnresolvedComments: func(_ context.Context, _ github.PR, _ []reviewloop.Policy) (map[string][]output.CommentView, error) {
+				return map[string][]output.CommentView{}, nil
+			},
 			Triggerer:  triggerer,
 			LoadConfig: func() (*config.Config, error) { return cfg, nil },
 			Out:        &buf,
@@ -402,10 +390,7 @@ func TestResolvePR_BareNumber_UsesCurrentRepo(t *testing.T) {
 
 	resolver := &fakePRResolver{owner: "org", repo: "rep", number: 99}
 
-	fq := newFakeQuerier()
-	fq.on("PRTimeline", timelineFiller("head", nil, nil))
-	fq.on("PRReviewThreads", emptyThreadsFiller)
-
+	snapshot := reviewloop.Snapshot{HeadCommitOID: "head"}
 	cfg := minimalConfig("org", "rep")
 
 	var buf bytes.Buffer
@@ -413,8 +398,13 @@ func TestResolvePR_BareNumber_UsesCurrentRepo(t *testing.T) {
 	err := cmd.RunStatusForTest(
 		context.Background(),
 		cmd.TestDeps{
-			Resolver:   resolver,
-			Client:     github.NewClientWithQuerier(fq),
+			Resolver: resolver,
+			FetchSnapshot: func(_ context.Context, _ github.PR, _ []reviewloop.Policy) (reviewloop.Snapshot, error) {
+				return snapshot, nil
+			},
+			UnresolvedComments: func(_ context.Context, _ github.PR, _ []reviewloop.Policy) (map[string][]output.CommentView, error) {
+				return map[string][]output.CommentView{}, nil
+			},
 			LoadConfig: func() (*config.Config, error) { return cfg, nil },
 			Out:        &buf,
 		},
@@ -431,10 +421,7 @@ func TestResolvePR_URL_ParsedDirectly(t *testing.T) {
 	// The resolver should NOT be called when a full URL is given.
 	resolver := &fakePRResolver{err: errors.New("should not be called")}
 
-	fq := newFakeQuerier()
-	fq.on("PRTimeline", timelineFiller("head", nil, nil))
-	fq.on("PRReviewThreads", emptyThreadsFiller)
-
+	snapshot := reviewloop.Snapshot{HeadCommitOID: "head"}
 	cfg := minimalConfig("myorg", "myrepo")
 
 	var buf bytes.Buffer
@@ -442,8 +429,13 @@ func TestResolvePR_URL_ParsedDirectly(t *testing.T) {
 	err := cmd.RunStatusForTest(
 		context.Background(),
 		cmd.TestDeps{
-			Resolver:   resolver,
-			Client:     github.NewClientWithQuerier(fq),
+			Resolver: resolver,
+			FetchSnapshot: func(_ context.Context, _ github.PR, _ []reviewloop.Policy) (reviewloop.Snapshot, error) {
+				return snapshot, nil
+			},
+			UnresolvedComments: func(_ context.Context, _ github.PR, _ []reviewloop.Policy) (map[string][]output.CommentView, error) {
+				return map[string][]output.CommentView{}, nil
+			},
 			LoadConfig: func() (*config.Config, error) { return cfg, nil },
 			Out:        &buf,
 		},
@@ -458,10 +450,7 @@ func TestResolvePR_NoArg_DelegatesToResolver(t *testing.T) {
 
 	resolver := &fakePRResolver{owner: "myorg", repo: "myrepo", number: 8}
 
-	fq := newFakeQuerier()
-	fq.on("PRTimeline", timelineFiller("head", nil, nil))
-	fq.on("PRReviewThreads", emptyThreadsFiller)
-
+	snapshot := reviewloop.Snapshot{HeadCommitOID: "head"}
 	cfg := minimalConfig("myorg", "myrepo")
 
 	var buf bytes.Buffer
@@ -469,8 +458,13 @@ func TestResolvePR_NoArg_DelegatesToResolver(t *testing.T) {
 	err := cmd.RunStatusForTest(
 		context.Background(),
 		cmd.TestDeps{
-			Resolver:   resolver,
-			Client:     github.NewClientWithQuerier(fq),
+			Resolver: resolver,
+			FetchSnapshot: func(_ context.Context, _ github.PR, _ []reviewloop.Policy) (reviewloop.Snapshot, error) {
+				return snapshot, nil
+			},
+			UnresolvedComments: func(_ context.Context, _ github.PR, _ []reviewloop.Policy) (map[string][]output.CommentView, error) {
+				return map[string][]output.CommentView{}, nil
+			},
 			LoadConfig: func() (*config.Config, error) { return cfg, nil },
 			Out:        &buf,
 		},
@@ -489,10 +483,7 @@ func TestParseFormat_InvalidValue_ReturnsError(t *testing.T) {
 
 	resolver := &fakePRResolver{owner: "o", repo: "r", number: 1}
 
-	fq := newFakeQuerier()
-	fq.on("PRTimeline", timelineFiller("head", nil, nil))
-	fq.on("PRReviewThreads", emptyThreadsFiller)
-
+	snapshot := reviewloop.Snapshot{HeadCommitOID: "head"}
 	cfg := minimalConfig("o", "r")
 
 	var buf bytes.Buffer
@@ -500,8 +491,13 @@ func TestParseFormat_InvalidValue_ReturnsError(t *testing.T) {
 	err := cmd.RunStatusForTest(
 		context.Background(),
 		cmd.TestDeps{
-			Resolver:   resolver,
-			Client:     github.NewClientWithQuerier(fq),
+			Resolver: resolver,
+			FetchSnapshot: func(_ context.Context, _ github.PR, _ []reviewloop.Policy) (reviewloop.Snapshot, error) {
+				return snapshot, nil
+			},
+			UnresolvedComments: func(_ context.Context, _ github.PR, _ []reviewloop.Policy) (map[string][]output.CommentView, error) {
+				return map[string][]output.CommentView{}, nil
+			},
 			LoadConfig: func() (*config.Config, error) { return cfg, nil },
 			Out:        &buf,
 		},
