@@ -6,6 +6,7 @@ require (
 	github.com/Oudwins/zog v0.22.2
 	github.com/cli/go-gh/v2 v2.13.0
 	github.com/cli/shurcooL-graphql v0.0.4
+	github.com/jehiah/agentdetection v0.0.0-20260504180809-d55902bec14c
 	github.com/stretchr/testify v1.11.1
 	gopkg.in/yaml.v3 v3.0.1
 )
@@ -22,7 +23,6 @@ require (
 	github.com/clipperhouse/uax29/v2 v2.7.0 // indirect
 	github.com/davecgh/go-spew v1.1.1 // indirect
 	github.com/henvic/httpretty v0.0.6 // indirect
-	github.com/jehiah/agentdetection v0.0.0-20260504180809-d55902bec14c // indirect
 	github.com/kr/pretty v0.3.1 // indirect
 	github.com/lucasb-eyer/go-colorful v1.4.0 // indirect
 	github.com/mattn/go-isatty v0.0.22 // indirect

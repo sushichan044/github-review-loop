@@ -23,19 +23,17 @@ func TestFormatFor(t *testing.T) {
 
 // ── DefaultFormat ─────────────────────────────────────────────────────────────
 
-// TestDefaultFormat exercises DefaultFormat() to satisfy deadcode analysis.
-// The test process runs under Claude Code (an AI agent), so we assert FormatAgent is returned.
-// The deterministic behavior is covered by TestFormatFor; this test ensures DefaultFormat
-// is reachable within the module.
+// TestDefaultFormat exercises DefaultFormat() to keep it reachable for deadcode
+// analysis. The concrete agent/human mapping is the spec of TestFormatFor; because
+// DefaultFormat() depends on the ambient environment (agentdetection.IsAgent()),
+// this test only asserts the result is a valid Format — keeping it deterministic
+// across both agent and non-agent (CI) environments.
 func TestDefaultFormat(t *testing.T) {
 	t.Parallel()
 
 	f := output.DefaultFormat()
-	// Under Claude Code the agentdetection library returns true, so we expect FormatAgent.
-	// Either way, the result must be a valid Format.
 	_, err := output.ParseFormat(string(f))
 	require.NoError(t, err, "DefaultFormat() must return a valid Format")
-	assert.Equal(t, output.FormatAgent, f, "DefaultFormat() returns FormatAgent when running under Claude Code")
 }
 
 // ── ParseFormat ──────────────────────────────────────────────────────────────
