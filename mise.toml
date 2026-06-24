@@ -1,0 +1,53 @@
+[tools]
+"golangci-lint" = "2.12.2"
+go = "1.26.4"
+
+[deps.go]
+auto = true
+
+
+[tasks."lint"]
+run = [{ tasks = ["lint:golangci", "lint:deadcode", "lint:gofix"] }]
+
+[tasks."lint:golangci"]
+description = "Run golangci-lint"
+run = "golangci-lint run"
+hide = true
+
+[tasks."lint:golangci:fix"]
+description = "Run golangci-lint with --fix"
+run = "golangci-lint run --fix"
+hide = true
+
+[tasks."lint:deadcode"]
+description = "Run deadcode"
+run = """
+out=$(go run golang.org/x/tools/cmd/deadcode@latest -test ./...)
+if [ -n "$out" ]; then
+  echo "$out"
+  exit 1
+fi
+"""
+hide = true
+
+[tasks."lint:gofix"]
+run = "go fix ./..."
+hide = true
+
+[tasks."lint:fix"]
+run = [{ tasks = ["lint:golangci:fix", "lint:deadcode", "lint:gofix"] }]
+
+[tasks.fmt]
+description = "Format code"
+run = "golangci-lint fmt"
+
+[tasks.test]
+description = "Run tests"
+run = "go test ./... -cover -json | go tool tparse -all"
+
+[tasks.clean]
+description = "Remove generated files"
+run = """
+rm -rf bin/
+go clean
+"""

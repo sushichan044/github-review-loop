@@ -1,0 +1,1 @@
+/Users/sushichan044/workspace/github.com/sushichan044/go-template/.agents/skills/golang-context/references/cancellation.md
