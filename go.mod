@@ -1,4 +1,4 @@
-module github.com/sushichan044/go-template
+module github.com/sushichan044/github-review-loop
 
 go 1.26
 
