@@ -120,8 +120,8 @@ func applyPullRequestReview(
 }
 
 // applyIssueComment checks whether the comment body matches a github-app policy
-// trigger string. When it does, and the comment author resolves to a known identity,
-// a TriggerAction is appended.
+// trigger string. When it does, a TriggerAction is appended for that github-app
+// reviewer, regardless of who posted the comment.
 func applyIssueComment(
 	snapshot *reviewloop.Snapshot,
 	c *issueCommentEvent,
@@ -137,12 +137,10 @@ func applyIssueComment(
 		if !strings.Contains(c.Body, p.Trigger) {
 			continue
 		}
-		if identity, ok := ResolveIdentity(c.AuthorLogin, policies); ok {
-			snapshot.Triggers = append(snapshot.Triggers, reviewloop.TriggerAction{
-				Reviewer: identity,
-				At:       c.CreatedAt,
-			})
-		}
+		snapshot.Triggers = append(snapshot.Triggers, reviewloop.TriggerAction{
+			Reviewer: p.Identity,
+			At:       c.CreatedAt,
+		})
 	}
 }
 

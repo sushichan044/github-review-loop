@@ -206,12 +206,6 @@ func TestFetchSnapshot_IssueCommentTrigger(t *testing.T) {
 
 	at := time.Date(2024, 3, 1, 8, 0, 0, 0, time.UTC)
 
-	fq := newFakeQuerier()
-	fq.on("PRTimeline", timelineFiller("headOID", nil, nil, []fakeIssueComment{
-		{AuthorLogin: "my-bot[bot]", Body: "/review please", CreatedAt: at},
-	}))
-	fq.on("PRReviewThreads", emptyThreadsFiller)
-
 	policies := []reviewloop.Policy{
 		{
 			Identity: reviewloop.ReviewerIdentity{Type: reviewloop.ReviewerTypeGitHubApp, Name: "my-bot"},
@@ -219,16 +213,48 @@ func TestFetchSnapshot_IssueCommentTrigger(t *testing.T) {
 		},
 	}
 
-	snapshot, err := github.FetchSnapshot(
-		context.Background(),
-		buildClient(fq),
-		github.PR{Owner: "o", Repo: "r", Number: 1},
-		policies,
-	)
-	require.NoError(t, err)
-	require.Len(t, snapshot.Triggers, 1)
-	assert.Equal(t, reviewloop.ReviewerTypeGitHubApp, snapshot.Triggers[0].Reviewer.Type)
-	assert.Equal(t, "my-bot", snapshot.Triggers[0].Reviewer.Name)
+	t.Run("human author posting trigger string records trigger for github-app policy", func(t *testing.T) {
+		t.Parallel()
+
+		// Real-world scenario: a human posts "@coderabbitai review" or "/review please".
+		// The trigger should be attributed to the github-app policy, not the human author.
+		fq := newFakeQuerier()
+		fq.on("PRTimeline", timelineFiller("headOID", nil, nil, []fakeIssueComment{
+			{AuthorLogin: "alice", Body: "/review please", CreatedAt: at},
+		}))
+		fq.on("PRReviewThreads", emptyThreadsFiller)
+
+		snapshot, err := github.FetchSnapshot(
+			context.Background(),
+			buildClient(fq),
+			github.PR{Owner: "o", Repo: "r", Number: 1},
+			policies,
+		)
+		require.NoError(t, err)
+		require.Len(t, snapshot.Triggers, 1)
+		assert.Equal(t, reviewloop.ReviewerTypeGitHubApp, snapshot.Triggers[0].Reviewer.Type)
+		assert.Equal(t, "my-bot", snapshot.Triggers[0].Reviewer.Name)
+		assert.Equal(t, at, snapshot.Triggers[0].At)
+	})
+
+	t.Run("comment body not containing trigger string produces no trigger", func(t *testing.T) {
+		t.Parallel()
+
+		fq := newFakeQuerier()
+		fq.on("PRTimeline", timelineFiller("headOID", nil, nil, []fakeIssueComment{
+			{AuthorLogin: "alice", Body: "looks good to me", CreatedAt: at},
+		}))
+		fq.on("PRReviewThreads", emptyThreadsFiller)
+
+		snapshot, err := github.FetchSnapshot(
+			context.Background(),
+			buildClient(fq),
+			github.PR{Owner: "o", Repo: "r", Number: 1},
+			policies,
+		)
+		require.NoError(t, err)
+		assert.Empty(t, snapshot.Triggers)
+	})
 }
 
 func TestFetchSnapshot_ThreadResolution(t *testing.T) {

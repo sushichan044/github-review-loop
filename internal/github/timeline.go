@@ -172,6 +172,9 @@ func fetchTimeline(_ context.Context, gql GraphQLQuerier, pr PR) (timelineResult
 		}
 
 		// Stop when we've fetched all items.
+		// Note: skip-based pagination can skip or duplicate items if the PR's timeline
+		// TotalCount changes between page fetches on a live PR; acceptable for the
+		// review-loop's controlled context.
 		if int32(skip)+pageSize >= items.TotalCount {
 			break
 		}

@@ -478,6 +478,90 @@ func TestResolvePR_NoArg_DelegatesToResolver(t *testing.T) {
 // ParseFormat / --format flag validation
 // ---------------------------------------------------------------------------
 
+// emptyPoliciesConfig returns a config whose loops do not match the given owner/repo,
+// so config.Resolve returns zero policies for that target.
+func emptyPoliciesConfig() *config.Config {
+	raw := `
+loops:
+  - scope: repo
+    owner: other-org
+    repo: other-repo
+    reviewers:
+      - type: user
+        name: bob
+        goal:
+          approved: true
+        max-rallies: 1
+`
+	cfg, err := config.Parse([]byte(raw))
+	if err != nil {
+		panic("emptyPoliciesConfig: " + err.Error())
+	}
+
+	return cfg
+}
+
+func TestStatus_EmptyPolicies_ReturnsError(t *testing.T) {
+	t.Parallel()
+
+	resolver := &fakePRResolver{owner: "myorg", repo: "myrepo", number: 10}
+	cfg := emptyPoliciesConfig()
+
+	var buf bytes.Buffer
+
+	err := cmd.RunStatusForTest(
+		context.Background(),
+		cmd.TestDeps{
+			Resolver: resolver,
+			FetchSnapshot: func(_ context.Context, _ github.PR, _ []reviewloop.Policy) (reviewloop.Snapshot, error) {
+				return reviewloop.Snapshot{}, nil
+			},
+			UnresolvedComments: func(_ context.Context, _ github.PR, _ []reviewloop.Policy) (map[string][]output.CommentView, error) {
+				return map[string][]output.CommentView{}, nil
+			},
+			LoadConfig: func() (*config.Config, error) { return cfg, nil },
+			Out:        &buf,
+		},
+		"human",
+		nil,
+	)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "no reviewers configured for myorg/myrepo")
+}
+
+func TestRequest_EmptyPolicies_ReturnsError(t *testing.T) {
+	t.Parallel()
+
+	exec := &captureExec{}
+	triggerer := github.NewTriggererWithExec(exec.exec)
+
+	resolver := &fakePRResolver{owner: "myorg", repo: "myrepo", number: 11}
+	cfg := emptyPoliciesConfig()
+
+	var buf bytes.Buffer
+
+	err := cmd.RunRequestForTest(
+		context.Background(),
+		cmd.TestDeps{
+			Resolver: resolver,
+			FetchSnapshot: func(_ context.Context, _ github.PR, _ []reviewloop.Policy) (reviewloop.Snapshot, error) {
+				return reviewloop.Snapshot{}, nil
+			},
+			UnresolvedComments: func(_ context.Context, _ github.PR, _ []reviewloop.Policy) (map[string][]output.CommentView, error) {
+				return map[string][]output.CommentView{}, nil
+			},
+			Triggerer:  triggerer,
+			LoadConfig: func() (*config.Config, error) { return cfg, nil },
+			Out:        &buf,
+		},
+		"",
+		nil,
+	)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "no reviewers configured for myorg/myrepo")
+	assert.Empty(t, exec.calls, "no review requests should fire when config is empty")
+}
+
 func TestParseFormat_InvalidValue_ReturnsError(t *testing.T) {
 	t.Parallel()
 

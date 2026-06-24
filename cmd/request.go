@@ -74,6 +74,10 @@ func runRequest(
 		return fmt.Errorf("could not resolve policies: %w", err)
 	}
 
+	if len(policies) == 0 {
+		return fmt.Errorf("no reviewers configured for %s/%s; check your config file", pr.Owner, pr.Repo)
+	}
+
 	loopState, err := fetchEvaluate(ctx, pr, d, policies)
 	if err != nil {
 		return fmt.Errorf("could not fetch PR state: %w", err)
