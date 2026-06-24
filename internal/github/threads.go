@@ -5,6 +5,9 @@ import (
 	"fmt"
 
 	graphql "github.com/cli/shurcooL-graphql"
+
+	"github.com/sushichan044/github-review-loop/internal/output"
+	"github.com/sushichan044/github-review-loop/internal/reviewloop"
 )
 
 // reviewThread holds extracted data for one PR review thread.
@@ -12,6 +15,7 @@ type reviewThread struct {
 	IsResolved  bool
 	AuthorLogin string // first comment's author login
 	Body        string // first comment's body
+	URL         string // first comment's permalink URL
 }
 
 // reviewThreadsQueryStruct is the shurcooL-graphql query struct for PR review threads.
@@ -27,6 +31,7 @@ type reviewThreadsQueryStruct struct {
 								Login string
 							}
 							Body string
+							URL  string
 						}
 					} `graphql:"comments(first: 1)"`
 				}
@@ -37,6 +42,62 @@ type reviewThreadsQueryStruct struct {
 			} `graphql:"reviewThreads(first: 100, after: $cursor)"`
 		} `graphql:"pullRequest(number: $number)"`
 	} `graphql:"repository(owner: $owner, name: $repo)"`
+}
+
+// UnresolvedThreadComments returns the unresolved thread comments attributed per reviewer,
+// keyed by the reviewer's identity string ("type:name"). Each comment is returned as a
+// [output.CommentView] with Author, Body, and URL populated.
+//
+// Attribution uses [ResolveIdentity] — the same logic as [FetchSnapshot] — so only threads
+// whose first-comment author resolves to a known policy identity are included.
+//
+// Note: CommentView.At is left as the zero value in v1 because the reviewThread struct does
+// not carry per-comment timestamps; adding that would require a separate query change.
+func UnresolvedThreadComments(
+	ctx context.Context,
+	client *Client,
+	pr PR,
+	policies []reviewloop.Policy,
+) (map[string][]output.CommentView, error) {
+	threads, err := fetchReviewThreads(ctx, client.gql, pr)
+	if err != nil {
+		return nil, err
+	}
+
+	result := make(map[string][]output.CommentView)
+
+	for _, t := range threads {
+		if t.IsResolved {
+			continue
+		}
+		if t.AuthorLogin == "" {
+			continue
+		}
+
+		identity, ok := ResolveIdentity(t.AuthorLogin, policies)
+		if !ok {
+			continue
+		}
+
+		key := identityKey(identity)
+		result[key] = append(result[key], output.CommentView{
+			Author: t.AuthorLogin,
+			Body:   t.Body,
+			URL:    t.URL,
+		})
+	}
+
+	return result, nil
+}
+
+// identityKey returns the canonical "type:name" string for a reviewer identity.
+// This matches the format used by output.formatIdentity.
+func identityKey(id reviewloop.ReviewerIdentity) string {
+	if id.Name == "" {
+		return string(id.Type)
+	}
+
+	return string(id.Type) + ":" + id.Name
 }
 
 // fetchReviewThreads retrieves all review threads for the given PR using
@@ -64,6 +125,7 @@ func fetchReviewThreads(_ context.Context, gql GraphQLQuerier, pr PR) ([]reviewT
 				first := node.Comments.Nodes[0]
 				t.AuthorLogin = first.Author.Login
 				t.Body = first.Body
+				t.URL = first.URL
 			}
 			threads = append(threads, t)
 		}
