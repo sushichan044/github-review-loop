@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"errors"
-	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -49,27 +48,20 @@ func (c *captureExec) exec(args ...string) (bytes.Buffer, bytes.Buffer, error) {
 // Test helpers
 // ---------------------------------------------------------------------------
 
-// minimalConfig returns a config with one user reviewer for owner/repo.
-func minimalConfig(owner, repo string) *config.Config {
-	raw := fmt.Sprintf(`
-loops:
-  - scope: owner
-    owner: %s
-    reviewers:
-      - type: user
-        name: alice
-        goal:
-          approved: true
-        max-rallies: 3
-  - scope: repo
-    owner: %s
-    repo: %s
-    reviewers:
-      - type: github-copilot
-        goal:
-          all-conversations-resolved: true
-        max-rallies: 5
-`, owner, owner, repo)
+// minimalConfig returns a config with a user reviewer and a copilot reviewer.
+func minimalConfig() *config.Config {
+	raw := `
+reviewers:
+  - type: user
+    name: alice
+    goal:
+      approved: true
+    max-rallies: 3
+  - type: github-copilot
+    goal:
+      all-conversations-resolved: true
+    max-rallies: 5
+`
 
 	cfg, err := config.Parse([]byte(raw))
 	if err != nil {
@@ -117,7 +109,7 @@ func TestStatus_HumanFormat(t *testing.T) {
 	}
 
 	resolver := &fakePRResolver{owner: "myorg", repo: "myrepo", number: 1}
-	cfg := minimalConfig("myorg", "myrepo")
+	cfg := minimalConfig()
 
 	var buf bytes.Buffer
 
@@ -160,7 +152,7 @@ func TestStatus_AgentFormat_BackgroundShellHint(t *testing.T) {
 	}
 
 	resolver := &fakePRResolver{owner: "myorg", repo: "myrepo", number: 2}
-	cfg := minimalConfig("myorg", "myrepo")
+	cfg := minimalConfig()
 
 	var buf bytes.Buffer
 
@@ -193,7 +185,7 @@ func TestStatus_AgentFormat_NoBackgroundShellHintInHuman(t *testing.T) {
 	}
 
 	resolver := &fakePRResolver{owner: "myorg", repo: "myrepo", number: 3}
-	cfg := minimalConfig("myorg", "myrepo")
+	cfg := minimalConfig()
 
 	var buf bytes.Buffer
 
@@ -246,7 +238,7 @@ func TestStatus_NewComments_OnlyAfterLastRally(t *testing.T) {
 	}
 
 	resolver := &fakePRResolver{owner: "myorg", repo: "myrepo", number: 1}
-	cfg := minimalConfig("myorg", "myrepo")
+	cfg := minimalConfig()
 
 	var buf bytes.Buffer
 
@@ -301,7 +293,7 @@ func TestStatus_NewComments_AllNewWhenNoRally(t *testing.T) {
 	}
 
 	resolver := &fakePRResolver{owner: "myorg", repo: "myrepo", number: 1}
-	cfg := minimalConfig("myorg", "myrepo")
+	cfg := minimalConfig()
 
 	var buf bytes.Buffer
 
@@ -358,7 +350,7 @@ func TestRequest_FiresOnlyCanRerequest(t *testing.T) {
 	triggerer := github.NewTriggererWithExec(exec.exec)
 
 	resolver := &fakePRResolver{owner: "myorg", repo: "myrepo", number: 4}
-	cfg := minimalConfig("myorg", "myrepo")
+	cfg := minimalConfig()
 
 	var buf bytes.Buffer
 
@@ -402,7 +394,7 @@ func TestRequest_ReviewerFlag_TargetsExactlyOne(t *testing.T) {
 	triggerer := github.NewTriggererWithExec(exec.exec)
 
 	resolver := &fakePRResolver{owner: "myorg", repo: "myrepo", number: 5}
-	cfg := minimalConfig("myorg", "myrepo")
+	cfg := minimalConfig()
 
 	var buf bytes.Buffer
 
@@ -455,7 +447,7 @@ func TestRequest_BlockedReviewer_PrintsNoOpReason(t *testing.T) {
 	triggerer := github.NewTriggererWithExec(exec.exec)
 
 	resolver := &fakePRResolver{owner: "myorg", repo: "myrepo", number: 6}
-	cfg := minimalConfig("myorg", "myrepo")
+	cfg := minimalConfig()
 
 	var buf bytes.Buffer
 
@@ -491,7 +483,7 @@ func TestResolvePR_BareNumber_UsesCurrentRepo(t *testing.T) {
 	resolver := &fakePRResolver{owner: "org", repo: "rep", number: 99}
 
 	snapshot := reviewloop.Snapshot{HeadCommitOID: "head"}
-	cfg := minimalConfig("org", "rep")
+	cfg := minimalConfig()
 
 	var buf bytes.Buffer
 
@@ -519,7 +511,7 @@ func TestResolvePR_URL_ParsedDirectly(t *testing.T) {
 	resolver := &fakePRResolver{err: errors.New("should not be called")}
 
 	snapshot := reviewloop.Snapshot{HeadCommitOID: "head"}
-	cfg := minimalConfig("myorg", "myrepo")
+	cfg := minimalConfig()
 
 	var buf bytes.Buffer
 
@@ -545,7 +537,7 @@ func TestResolvePR_NoArg_DelegatesToResolver(t *testing.T) {
 	resolver := &fakePRResolver{owner: "myorg", repo: "myrepo", number: 8}
 
 	snapshot := reviewloop.Snapshot{HeadCommitOID: "head"}
-	cfg := minimalConfig("myorg", "myrepo")
+	cfg := minimalConfig()
 
 	var buf bytes.Buffer
 
@@ -569,22 +561,10 @@ func TestResolvePR_NoArg_DelegatesToResolver(t *testing.T) {
 // ParseFormat / --format flag validation
 // ---------------------------------------------------------------------------
 
-// emptyPoliciesConfig returns a config whose loops do not match the given owner/repo,
-// so config.Resolve returns zero policies for that target.
+// emptyPoliciesConfig returns a config with no reviewers, so config.Policies
+// returns zero policies.
 func emptyPoliciesConfig() *config.Config {
-	raw := `
-loops:
-  - scope: repo
-    owner: other-org
-    repo: other-repo
-    reviewers:
-      - type: user
-        name: bob
-        goal:
-          approved: true
-        max-rallies: 1
-`
-	cfg, err := config.Parse([]byte(raw))
+	cfg, err := config.Parse([]byte("reviewers: []\n"))
 	if err != nil {
 		panic("emptyPoliciesConfig: " + err.Error())
 	}
@@ -614,7 +594,7 @@ func TestStatus_EmptyPolicies_ReturnsError(t *testing.T) {
 		nil,
 	)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "no reviewers configured for myorg/myrepo")
+	assert.Contains(t, err.Error(), "no reviewers configured in .github/review-loop.yml")
 }
 
 func TestRequest_EmptyPolicies_ReturnsError(t *testing.T) {
@@ -643,7 +623,7 @@ func TestRequest_EmptyPolicies_ReturnsError(t *testing.T) {
 		nil,
 	)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "no reviewers configured for myorg/myrepo")
+	assert.Contains(t, err.Error(), "no reviewers configured in .github/review-loop.yml")
 	assert.Empty(t, exec.calls, "no review requests should fire when config is empty")
 }
 
@@ -653,7 +633,7 @@ func TestParseFormat_InvalidValue_ReturnsError(t *testing.T) {
 	resolver := &fakePRResolver{owner: "o", repo: "r", number: 1}
 
 	snapshot := reviewloop.Snapshot{HeadCommitOID: "head"}
-	cfg := minimalConfig("o", "r")
+	cfg := minimalConfig()
 
 	var buf bytes.Buffer
 
@@ -672,4 +652,117 @@ func TestParseFormat_InvalidValue_ReturnsError(t *testing.T) {
 	)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "notaformat")
+}
+
+// ---------------------------------------------------------------------------
+// Missing-config behavior (no-op + init hint)
+// ---------------------------------------------------------------------------
+
+func TestStatus_NoConfig_PrintsHintAndSucceeds(t *testing.T) {
+	t.Parallel()
+
+	resolver := &fakePRResolver{owner: "myorg", repo: "myrepo", number: 12}
+
+	var buf bytes.Buffer
+
+	err := cmd.RunStatusForTest(
+		context.Background(),
+		cmd.TestDeps{
+			Resolver: resolver,
+			FetchSnapshot: func(_ context.Context, _ github.PR, _ []reviewloop.Policy) (reviewloop.Snapshot, error) {
+				return reviewloop.Snapshot{}, nil
+			},
+			LoadConfig: func() (*config.Config, error) { return nil, config.ErrConfigNotFound },
+			Out:        &buf,
+		},
+		"human",
+		nil,
+	)
+	require.NoError(t, err)
+	assert.Contains(t, buf.String(), "init")
+}
+
+func TestStatus_NoConfig_HintWinsOverPRResolutionFailure(t *testing.T) {
+	t.Parallel()
+
+	// Config is checked before the PR is resolved, so an unconfigured repo gets
+	// the init hint even when PR resolution would fail (no token / no open PR).
+	resolver := &fakePRResolver{err: errors.New("gh: no pull requests found")}
+
+	var buf bytes.Buffer
+
+	err := cmd.RunStatusForTest(
+		context.Background(),
+		cmd.TestDeps{
+			Resolver: resolver,
+			FetchSnapshot: func(_ context.Context, _ github.PR, _ []reviewloop.Policy) (reviewloop.Snapshot, error) {
+				return reviewloop.Snapshot{}, nil
+			},
+			LoadConfig: func() (*config.Config, error) { return nil, config.ErrConfigNotFound },
+			Out:        &buf,
+		},
+		"human",
+		nil,
+	)
+	require.NoError(t, err)
+	assert.Contains(t, buf.String(), "init")
+}
+
+func TestRequest_NoConfig_PrintsHintAndFiresNothing(t *testing.T) {
+	t.Parallel()
+
+	exec := &captureExec{}
+	triggerer := github.NewTriggererWithExec(exec.exec)
+
+	resolver := &fakePRResolver{owner: "myorg", repo: "myrepo", number: 13}
+
+	var buf bytes.Buffer
+
+	err := cmd.RunRequestForTest(
+		context.Background(),
+		cmd.TestDeps{
+			Resolver: resolver,
+			FetchSnapshot: func(_ context.Context, _ github.PR, _ []reviewloop.Policy) (reviewloop.Snapshot, error) {
+				return reviewloop.Snapshot{}, nil
+			},
+			Triggerer:  triggerer,
+			LoadConfig: func() (*config.Config, error) { return nil, config.ErrConfigNotFound },
+			Out:        &buf,
+		},
+		"",
+		nil,
+	)
+	require.NoError(t, err)
+	assert.Contains(t, buf.String(), "init")
+	assert.Empty(t, exec.calls, "no review requests should fire when config is absent")
+}
+
+// ---------------------------------------------------------------------------
+// init command tests
+// ---------------------------------------------------------------------------
+
+func TestInit_PrintsCreatedPath(t *testing.T) {
+	t.Parallel()
+
+	var buf bytes.Buffer
+
+	err := cmd.RunInitForTest(cmd.TestDeps{
+		InitConfig: func() (string, error) { return "/repo/.github/review-loop.yml", nil },
+		Out:        &buf,
+	})
+	require.NoError(t, err)
+	assert.Contains(t, buf.String(), "/repo/.github/review-loop.yml")
+}
+
+func TestInit_PropagatesError(t *testing.T) {
+	t.Parallel()
+
+	var buf bytes.Buffer
+
+	err := cmd.RunInitForTest(cmd.TestDeps{
+		InitConfig: func() (string, error) { return "", config.ErrConfigExists },
+		Out:        &buf,
+	})
+	require.Error(t, err)
+	assert.ErrorIs(t, err, config.ErrConfigExists)
 }

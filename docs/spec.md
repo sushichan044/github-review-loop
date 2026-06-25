@@ -60,42 +60,31 @@ loop 全体は、全 state machine が終端 (`goal達成` または `exhausted`
 
 ## config
 
-- ファイル形式は YAML。ロードは `internal/xdg` 経由（Windows 対応）。
-- top-level key は **`loops`**。各エントリが「scope ごとの review loop ポリシー」。
-- scope: `owner` ワイドな設定を `repo` が上書きする。マージは **reviewer identity (`type` + `name`) 単位**:
-  - repo にしか無い reviewer は **追加**
-  - owner にしか無い reviewer は **維持**
-  - 同一 reviewer は repo 設定で **上書き**
+- 設定は **適用先のリポジトリ内**に置く。パスは repo ルートの `.github/review-loop.yml`（`.yaml` も許容）。探索は working directory から `.git` を持つ親へ遡って repo ルートを特定し、その `.github/` を読む。
+- **マシングローバルな設定は持たない。** これは意図的な決定。レビュー方針のゴールは「チーム/組織の全員と CI に等しく効かせる」こと。`~/.config` のような per-machine ファイルは MDM 等で全員に配らない限り全員には届かず、CI にも届かない。全開発者と CI に確実に届く唯一の場所が **repo に commit されたファイル**。したがって配布・強制の機構として global config は不適格で、廃止した。
+- top-level key は **`reviewers`** のフラットなリスト。1 repo = 1 方針なので scope / owner / repo といったキーは持たない（owner/repo は git remote / PR から解決する config の責務外）。
 - `max-rallies` は goal から切り出した **reviewer 直下の独立フィールド**（省略時は default 5）。
+- 設定が無い repo では `status` / `request` はエラーにせず no-op し、`init` を促すヒントを出す。`init` は commented テンプレートを `.github/review-loop.yml` に書き出す（既存ファイルは上書きしない）。テンプレートは `//go:embed` で実ファイルとして同梱。
 - GitHub token は `github.com/cli/go-gh/v2/pkg/api`（`api.DefaultRESTClient()` / `api.DefaultGraphQLClient()`）が gh の認証（`gh auth token` と同ソース、`GH_TOKEN` フォールバック）から自動取得。明示管理しない。
 
 ```yaml
-loops:
-  - scope: owner
-    owner: sushichan044
-    reviewers:
-      - type: user
-        name: sushichan044
-        goal: { approved: true }          # 実質ゴール
-        max-rallies: 5                     # 直交する安全弁（省略時 default）
-      - type: github-copilot               # approve 不可能なので resolved がゴール
-        goal: { all-conversations-resolved: true }
-        max-rallies: 5
-      - type: github-app
-        name: coderabbitai
-        goal: { approved: true }
-        max-rallies: 5
-        trigger: "@coderabbitai review"    # github-app のみ default を上書き
-
-  - scope: repo
-    owner: sushichan044
-    repo: github-review-loop
-    reviewers:
-      # owner-wide 設定に reviewer identity 単位でマージされる
-      - type: github-copilot
-        goal: { all-conversations-resolved: true }
-        max-rallies: 3
+# .github/review-loop.yml
+reviewers:
+  - type: user
+    name: sushichan044
+    goal: { approved: true }          # 実質ゴール
+    max-rallies: 5                     # 直交する安全弁（省略時 default）
+  - type: github-copilot               # approve 不可能なので resolved がゴール
+    goal: { all-conversations-resolved: true }
+    max-rallies: 5
+  - type: github-app
+    name: coderabbitai
+    goal: { approved: true }
+    max-rallies: 5
+    trigger: "@coderabbitai review"    # github-app のみ default を上書き
 ```
+
+> 補足: 「config が repo にある」ことと「enforcement が達成される」ことは別。実際に効かせるには CI / エージェントが `github-review-loop` を起動する配線が要る。また PR で config 自体を弱められないようにするなら `.github/review-loop.yml` に CODEOWNERS をかける。いずれも本ツールのスコープ外。
 
 ---
 

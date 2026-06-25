@@ -7,7 +7,6 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/sushichan044/github-review-loop/internal/config"
 	"github.com/sushichan044/github-review-loop/internal/github"
 	"github.com/sushichan044/github-review-loop/internal/reviewloop"
 )
@@ -54,6 +53,11 @@ func runRequest(
 		return err
 	}
 
+	policies, ok, err := resolvePolicies(d)
+	if err != nil || !ok {
+		return err
+	}
+
 	var prArg string
 	if len(args) > 0 {
 		prArg = args[0]
@@ -62,20 +66,6 @@ func runRequest(
 	pr, err := resolvePR(ctx, prArg, d.resolver)
 	if err != nil {
 		return fmt.Errorf("could not resolve PR: %w", err)
-	}
-
-	cfg, err := d.loadConfig()
-	if err != nil {
-		return fmt.Errorf("could not load config: %w", err)
-	}
-
-	policies, err := config.Resolve(cfg, pr.Owner, pr.Repo)
-	if err != nil {
-		return fmt.Errorf("could not resolve policies: %w", err)
-	}
-
-	if len(policies) == 0 {
-		return fmt.Errorf("no reviewers configured for %s/%s; check your config file", pr.Owner, pr.Repo)
 	}
 
 	loopState, _, err := fetchEvaluate(ctx, pr, d, policies)

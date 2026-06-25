@@ -3,6 +3,8 @@ package cmd
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"io"
 
 	"github.com/spf13/cobra"
@@ -16,6 +18,10 @@ import (
 // configLoader abstracts config.Load for testability.
 type configLoader func() (*config.Config, error)
 
+// configInitializer abstracts config.Init for testability. It returns the path
+// of the written config file.
+type configInitializer func() (string, error)
+
 // deps holds all injected dependencies for the CLI commands.
 // Tests substitute fakes; production uses the real implementations.
 type deps struct {
@@ -24,8 +30,13 @@ type deps struct {
 	threadComments func(ctx context.Context, pr github.PR, policies []reviewloop.Policy) (map[string][]github.ThreadComment, error)
 	triggerer      *github.Triggerer
 	loadConfig     configLoader
+	initConfig     configInitializer
 	out            io.Writer
 }
+
+// noConfigHint is printed when a command runs in a repository that has no
+// review-loop config yet. It points the user at `init` instead of failing.
+const noConfigHint = "No review-loop config found. Run `github-review-loop init` to create .github/review-loop.yml."
 
 // formatResolver returns the [output.Format] to use, resolving the --format flag.
 type formatResolver func() (output.Format, error)
@@ -60,6 +71,7 @@ from the PR event history, and fires review re-requests when appropriate.`,
 
 	root.AddCommand(newStatusCmd(d, resolveFormat))
 	root.AddCommand(newRequestCmd(d, resolveFormat))
+	root.AddCommand(newInitCmd(d))
 
 	return root
 }
@@ -82,6 +94,7 @@ func Execute(w io.Writer) error {
 		},
 		triggerer:  github.NewTriggerer(),
 		loadConfig: config.Load,
+		initConfig: config.Init,
 		out:        w,
 	}
 
@@ -124,6 +137,35 @@ func resolvePR(
 	}
 
 	return github.PR{Owner: owner, Repo: repo, Number: number}, nil
+}
+
+// resolvePolicies loads the repository's config and maps it to policies. When
+// the repo has no config yet it prints the init hint and returns ok=false, so
+// the caller stops without treating it as an error. It is called before PR
+// resolution (a network call) so an unconfigured repo gets the hint rather
+// than a confusing PR-lookup failure.
+func resolvePolicies(d deps) ([]reviewloop.Policy, bool, error) {
+	cfg, err := d.loadConfig()
+	if errors.Is(err, config.ErrConfigNotFound) {
+		if _, printErr := fmt.Fprintln(d.out, noConfigHint); printErr != nil {
+			return nil, false, printErr
+		}
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, false, fmt.Errorf("could not load config: %w", err)
+	}
+
+	policies, err := config.Policies(cfg)
+	if err != nil {
+		return nil, false, fmt.Errorf("could not resolve policies: %w", err)
+	}
+
+	if len(policies) == 0 {
+		return nil, false, errors.New("no reviewers configured in .github/review-loop.yml")
+	}
+
+	return policies, true, nil
 }
 
 // fetchEvaluate is the shared fetch+evaluate pipeline used by both status and request.

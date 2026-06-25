@@ -18,6 +18,7 @@ type TestDeps struct {
 	ThreadComments func(ctx context.Context, pr github.PR, policies []reviewloop.Policy) (map[string][]github.ThreadComment, error)
 	Triggerer      *github.Triggerer
 	LoadConfig     func() (*config.Config, error)
+	InitConfig     func() (string, error)
 	Out            io.Writer
 }
 
@@ -42,6 +43,7 @@ func toDeps(td TestDeps) deps {
 		threadComments: threadComments,
 		triggerer:      triggerer,
 		loadConfig:     td.LoadConfig,
+		initConfig:     td.InitConfig,
 		out:            td.Out,
 	}
 }
@@ -81,4 +83,9 @@ func RunRequestForTest(
 	})
 
 	return runRequest(ctx, d, resolveFormat, reviewerFlag, args)
+}
+
+// RunInitForTest executes the init command with the given test deps.
+func RunInitForTest(td TestDeps) error {
+	return runInit(toDeps(td))
 }

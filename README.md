@@ -35,43 +35,32 @@ gh auth login
 
 ## Configuration
 
-Config lives at `<config-home>/github-review-loop/config.yaml`, where `<config-home>` is
-`$XDG_CONFIG_HOME` (default `~/.config` on macOS/Linux) or the OS config dir on Windows.
+Config lives **in the repository it applies to**, at `.github/review-loop.yml` (a `.yaml`
+extension is also accepted). Commit it: a file committed to the repo is the only thing that
+reaches every collaborator and CI alike, so it is how a review-loop policy is shared and
+enforced. There is no machine-global config — a per-machine file cannot enforce a policy across
+a team.
 
-The top-level key is `loops`. Each entry is a policy scoped to either an `owner` (applies to all of
-that owner's repos) or a single `repo`. For a given repository, the matching `owner` policy and
-`repo` policy are **merged by reviewer identity** (`type` + `name`): a reviewer defined at `repo`
-scope overrides the same reviewer at `owner` scope, repo-only reviewers are added, and owner-only
-reviewers are kept.
+Run [`github-review-loop init`](#init) to scaffold a commented template, then edit it.
+
+The top-level key is `reviewers`. Each entry is one reviewer in the loop:
 
 ```yaml
-loops:
-  - scope: owner
-    owner: sushichan044
-    reviewers:
-      - type: user
-        name: sushichan044
-        goal: { approved: true }            # done when this user approves
-        max-rallies: 5                       # safety limit (default 5 if omitted)
+reviewers:
+  - type: user
+    name: sushichan044
+    goal: { approved: true }            # done when this user approves
+    max-rallies: 5                       # safety limit (default 5 if omitted)
 
-      - type: github-copilot
-        goal: { all-conversations-resolved: true }  # done when no unresolved review threads remain
-        max-rallies: 5
+  - type: github-copilot
+    goal: { all-conversations-resolved: true }  # done when no unresolved review threads remain
+    max-rallies: 5
 
-      - type: github-app
-        name: coderabbitai
-        goal: { approved: true }
-        max-rallies: 5
-        trigger: "@coderabbitai review"      # github-app reviewers can be triggered by a comment
-
-  - scope: repo
-    owner: sushichan044
-    repo: github-review-loop
-    reviewers:
-      # merged onto the owner policy by identity; this overrides github-copilot's max-rallies
-      - type: github-copilot
-        goal: { all-conversations-resolved: true }
-        max-rallies: 3
+  - type: github-app
+    name: coderabbitai
+    goal: { approved: true }
+    max-rallies: 5
+    trigger: "@coderabbitai review"      # github-app reviewers can be triggered by a comment
 ```
 
 ### Reviewer fields
@@ -87,6 +76,9 @@ loops:
 ## Usage
 
 ```bash
+# Scaffold .github/review-loop.yml in the current repository
+github-review-loop init
+
 # Show the loop status for the current branch's PR (or pass a PR number / URL)
 github-review-loop status
 github-review-loop status 42
@@ -102,6 +94,15 @@ github-review-loop request --reviewer github-app:coderabbitai
 github-review-loop status --format human
 github-review-loop status --format agent
 ```
+
+When the repository has no config yet, `status` and `request` do nothing and print a hint to
+run `init` instead of failing.
+
+### `init`
+
+Writes a commented `.github/review-loop.yml` template at the repository root, creating
+`.github/` if needed. It refuses to overwrite an existing config so a committed policy is never
+clobbered. Edit the template to list your reviewers, then commit it.
 
 ### `status`
 

@@ -1,24 +1,51 @@
 // Package config loads, parses, and resolves the github-review-loop config file.
+//
+// Config lives in the repository it applies to, at .github/review-loop.yml
+// (a .yaml extension is also accepted). Committing it is how a review-loop
+// policy is shared with collaborators and CI — there is no machine-global
+// config, because a per-machine file cannot enforce policy across a team.
 package config
 
 import (
+	_ "embed"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 
 	z "github.com/Oudwins/zog"
 	"gopkg.in/yaml.v3"
 
 	"github.com/sushichan044/github-review-loop/internal/reviewloop"
-	"github.com/sushichan044/github-review-loop/internal/xdg"
 )
 
-const configFileName = "config.yaml"
-const appDirName = "github-review-loop"
-const defaultMaxRallies = 5
-const scopeRepo = "repo"
+const (
+	configDir         = ".github"
+	defaultConfigName = "review-loop.yml"
+	defaultMaxRallies = 5
+)
+
+// configNames are the accepted config file names, tried in order. Both .yml and
+// .yaml are accepted so users are not tripped up by the extension; init writes
+// defaultConfigName.
+func configNames() []string {
+	return []string{defaultConfigName, "review-loop.yaml"}
+}
+
+// defaultConfig is the commented template written by Init.
+//
+//go:embed templates/review-loop.yml
+var defaultConfig []byte
+
+// ErrConfigNotFound is returned by Load when no config file exists for the
+// current repository (including when the working directory is not inside a
+// git repository). Callers treat this as "not configured yet" rather than a
+// hard failure.
+var ErrConfigNotFound = errors.New("config: file not found")
+
+// ErrConfigExists is returned by Init when a config file already exists, so it
+// never clobbers a committed policy.
+var ErrConfigExists = errors.New("config: file already exists")
 
 // GoalConfig holds the two mutually exclusive goal flags as parsed from YAML.
 type GoalConfig struct {
@@ -26,7 +53,7 @@ type GoalConfig struct {
 	AllConversationsResolved bool `zog:"all-conversations-resolved"`
 }
 
-// ReviewerConfig is a single reviewer entry inside a loop.
+// ReviewerConfig is a single reviewer entry.
 type ReviewerConfig struct {
 	Type       string     `zog:"type"`
 	Name       string     `zog:"name"`
@@ -35,17 +62,9 @@ type ReviewerConfig struct {
 	Trigger    string     `zog:"trigger"`
 }
 
-// LoopEntry is one element of the top-level `loops` array.
-type LoopEntry struct {
-	Scope     string           `zog:"scope"`
-	Owner     string           `zog:"owner"`
-	Repo      string           `zog:"repo"`
-	Reviewers []ReviewerConfig `zog:"reviewers"`
-}
-
-// Config is the parsed, validated representation of config.yaml.
+// Config is the parsed, validated representation of review-loop.yml.
 type Config struct {
-	Loops []LoopEntry `zog:"loops"`
+	Reviewers []ReviewerConfig `zog:"reviewers"`
 }
 
 func buildSchema() *z.StructSchema {
@@ -84,25 +103,8 @@ func buildSchema() *z.StructSchema {
 		return true
 	})
 
-	loopEntrySchema := z.Struct(z.Shape{
-		"Scope":     z.String().OneOf([]string{"owner", scopeRepo}),
-		"Owner":     z.String().Required(),
-		"Repo":      z.String(),
-		"Reviewers": z.Slice(reviewerSchema),
-	}).TestFunc(func(dataPtr any, ctx z.Ctx) bool {
-		e, ok := dataPtr.(*LoopEntry)
-		if !ok {
-			return false
-		}
-		if e.Scope == scopeRepo && e.Repo == "" {
-			ctx.AddIssue(ctx.Issue().SetMessage("'repo' is required when scope is 'repo'"))
-			return false
-		}
-		return true
-	})
-
 	return z.Struct(z.Shape{
-		"Loops": z.Slice(loopEntrySchema),
+		"Reviewers": z.Slice(reviewerSchema),
 	})
 }
 
@@ -120,79 +122,81 @@ func Parse(data []byte) (*Config, error) {
 	return &cfg, nil
 }
 
-// Load reads and parses the config file from the XDG config home.
-// Returns an error wrapping [os.ErrNotExist] if the file does not exist.
+// Load finds the config for the current repository and parses it. It walks up
+// from the working directory to the repository root, then reads
+// .github/review-loop.yml (or .yaml). It returns ErrConfigNotFound when no such
+// file exists, or when the working directory is not inside a git repository.
 func Load() (*Config, error) {
-	home, err := xdg.ConfigHome()
+	start, err := os.Getwd()
 	if err != nil {
-		return nil, fmt.Errorf("config: cannot determine config home: %w", err)
+		return nil, fmt.Errorf("config: cannot determine working directory: %w", err)
 	}
-
-	path := filepath.Join(home, appDirName, configFileName)
-	data, err := os.ReadFile(path)
-	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return nil, fmt.Errorf("config: file not found at %s: %w", path, os.ErrNotExist)
-		}
-		return nil, fmt.Errorf("config: cannot read %s: %w", path, err)
-	}
-
-	return Parse(data)
+	return loadFrom(start)
 }
 
-// Resolve merges owner-scope and repo-scope reviewer lists for the given owner/repo
-// and returns one Policy per merged reviewer. Repo-scope overrides owner-scope on
-// the same identity (type + name, case-insensitive).
-func Resolve(cfg *Config, owner, repo string) ([]reviewloop.Policy, error) {
-	var ownerReviewers []ReviewerConfig
-	var repoReviewers []ReviewerConfig
+func loadFrom(start string) (*Config, error) {
+	root, err := repoRootFrom(start)
+	if err != nil {
+		// Not inside a git repo => there is no repo-local config to find.
+		return nil, fmt.Errorf("%w: %w", ErrConfigNotFound, err)
+	}
 
-	for _, loop := range cfg.Loops {
-		if !strings.EqualFold(loop.Owner, owner) {
-			continue
+	for _, name := range configNames() {
+		path := filepath.Join(root, configDir, name)
+		data, readErr := os.ReadFile(path)
+		if readErr == nil {
+			return Parse(data)
 		}
-		switch loop.Scope {
-		case "owner":
-			ownerReviewers = append(ownerReviewers, loop.Reviewers...)
-		case scopeRepo:
-			if strings.EqualFold(loop.Repo, repo) {
-				repoReviewers = append(repoReviewers, loop.Reviewers...)
-			}
+		if !errors.Is(readErr, os.ErrNotExist) {
+			return nil, fmt.Errorf("config: cannot read %s: %w", path, readErr)
 		}
 	}
 
-	type identityKey struct {
-		typ  string
-		name string
+	return nil, fmt.Errorf("%w under %s", ErrConfigNotFound, filepath.Join(root, configDir))
+}
+
+// Init writes the default config template to .github/review-loop.yml at the
+// current repository root, creating .github if needed. It returns the path
+// written. It returns ErrConfigExists if a config file already exists, so a
+// committed policy is never overwritten.
+func Init() (string, error) {
+	start, err := os.Getwd()
+	if err != nil {
+		return "", fmt.Errorf("config: cannot determine working directory: %w", err)
 	}
-	key := func(r ReviewerConfig) identityKey {
-		return identityKey{typ: r.Type, name: strings.ToLower(r.Name)}
+	return initAt(start)
+}
+
+func initAt(start string) (string, error) {
+	root, err := repoRootFrom(start)
+	if err != nil {
+		return "", err
 	}
 
-	repoByIdentity := make(map[identityKey]ReviewerConfig, len(repoReviewers))
-	for _, r := range repoReviewers {
-		repoByIdentity[key(r)] = r
-	}
-
-	var merged []ReviewerConfig
-	ownerKeys := make(map[identityKey]struct{}, len(ownerReviewers))
-	for _, r := range ownerReviewers {
-		k := key(r)
-		ownerKeys[k] = struct{}{}
-		if override, ok := repoByIdentity[k]; ok {
-			merged = append(merged, override)
-		} else {
-			merged = append(merged, r)
+	dir := filepath.Join(root, configDir)
+	for _, name := range configNames() {
+		existing := filepath.Join(dir, name)
+		if _, statErr := os.Stat(existing); statErr == nil {
+			return "", fmt.Errorf("%w: %s", ErrConfigExists, existing)
 		}
 	}
-	for _, r := range repoReviewers {
-		if _, seen := ownerKeys[key(r)]; !seen {
-			merged = append(merged, r)
-		}
+
+	if err = os.MkdirAll(dir, 0o750); err != nil {
+		return "", fmt.Errorf("config: cannot create %s: %w", dir, err)
 	}
 
-	policies := make([]reviewloop.Policy, 0, len(merged))
-	for _, r := range merged {
+	path := filepath.Join(dir, defaultConfigName)
+	if err = os.WriteFile(path, defaultConfig, 0o600); err != nil {
+		return "", fmt.Errorf("config: cannot write %s: %w", path, err)
+	}
+
+	return path, nil
+}
+
+// Policies maps the parsed reviewer entries to reviewloop policies.
+func Policies(cfg *Config) ([]reviewloop.Policy, error) {
+	policies := make([]reviewloop.Policy, 0, len(cfg.Reviewers))
+	for _, r := range cfg.Reviewers {
 		goal, err := mapGoal(r.Goal)
 		if err != nil {
 			return nil, err
@@ -208,6 +212,23 @@ func Resolve(cfg *Config, owner, repo string) ([]reviewloop.Policy, error) {
 		})
 	}
 	return policies, nil
+}
+
+// repoRootFrom walks up from start to the first directory that contains a .git
+// entry (a directory for normal clones, a file for worktrees) and returns it.
+func repoRootFrom(start string) (string, error) {
+	dir := start
+	for {
+		if _, statErr := os.Stat(filepath.Join(dir, ".git")); statErr == nil {
+			return dir, nil
+		}
+
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return "", errors.New("config: not inside a git repository")
+		}
+		dir = parent
+	}
 }
 
 func mapGoal(g GoalConfig) (reviewloop.Goal, error) {
