@@ -15,7 +15,6 @@ import (
 	"github.com/sushichan044/github-review-loop/cmd"
 	"github.com/sushichan044/github-review-loop/internal/config"
 	"github.com/sushichan044/github-review-loop/internal/github"
-	"github.com/sushichan044/github-review-loop/internal/output"
 	"github.com/sushichan044/github-review-loop/internal/reviewloop"
 )
 
@@ -105,9 +104,15 @@ func TestStatus_HumanFormat(t *testing.T) {
 		},
 	}
 
-	unresolvedComments := map[string][]output.CommentView{
+	// threadComments returns an unresolved comment for copilot.
+	threadComments := map[string][]github.ThreadComment{
 		"github-copilot": {
-			{Author: "copilot", Body: "Please fix the import", URL: "https://github.com/o/r/pull/1#r1"},
+			{
+				Author:   "copilot",
+				Body:     "Please fix the import",
+				URL:      "https://github.com/o/r/pull/1#r1",
+				Resolved: false,
+			},
 		},
 	}
 
@@ -123,8 +128,8 @@ func TestStatus_HumanFormat(t *testing.T) {
 			FetchSnapshot: func(_ context.Context, _ github.PR, _ []reviewloop.Policy) (reviewloop.Snapshot, error) {
 				return snapshot, nil
 			},
-			UnresolvedComments: func(_ context.Context, _ github.PR, _ []reviewloop.Policy) (map[string][]output.CommentView, error) {
-				return unresolvedComments, nil
+			ThreadComments: func(_ context.Context, _ github.PR, _ []reviewloop.Policy) (map[string][]github.ThreadComment, error) {
+				return threadComments, nil
 			},
 			LoadConfig: func() (*config.Config, error) { return cfg, nil },
 			Out:        &buf,
@@ -166,9 +171,6 @@ func TestStatus_AgentFormat_BackgroundShellHint(t *testing.T) {
 			FetchSnapshot: func(_ context.Context, _ github.PR, _ []reviewloop.Policy) (reviewloop.Snapshot, error) {
 				return snapshot, nil
 			},
-			UnresolvedComments: func(_ context.Context, _ github.PR, _ []reviewloop.Policy) (map[string][]output.CommentView, error) {
-				return map[string][]output.CommentView{}, nil
-			},
 			LoadConfig: func() (*config.Config, error) { return cfg, nil },
 			Out:        &buf,
 		},
@@ -201,9 +203,6 @@ func TestStatus_AgentFormat_NoBackgroundShellHintInHuman(t *testing.T) {
 			Resolver: resolver,
 			FetchSnapshot: func(_ context.Context, _ github.PR, _ []reviewloop.Policy) (reviewloop.Snapshot, error) {
 				return snapshot, nil
-			},
-			UnresolvedComments: func(_ context.Context, _ github.PR, _ []reviewloop.Policy) (map[string][]output.CommentView, error) {
-				return map[string][]output.CommentView{}, nil
 			},
 			LoadConfig: func() (*config.Config, error) { return cfg, nil },
 			Out:        &buf,
@@ -238,11 +237,11 @@ func TestStatus_NewComments_OnlyAfterLastRally(t *testing.T) {
 		},
 	}
 
-	// allComments: one before rally, one after rally.
-	allComments := map[string][]output.CommentView{
+	// threadComments: one before rally, one after rally, both unresolved.
+	threadComments := map[string][]github.ThreadComment{
 		"user:alice": {
-			{Author: "alice", Body: "old comment", URL: "https://github.com/o/r/pull/1#r1", At: beforeRally},
-			{Author: "alice", Body: "new comment", URL: "https://github.com/o/r/pull/1#r2", At: afterRally},
+			{Author: "alice", Body: "old comment", URL: "https://github.com/o/r/pull/1#r1", CreatedAt: beforeRally},
+			{Author: "alice", Body: "new comment", URL: "https://github.com/o/r/pull/1#r2", CreatedAt: afterRally},
 		},
 	}
 
@@ -258,11 +257,8 @@ func TestStatus_NewComments_OnlyAfterLastRally(t *testing.T) {
 			FetchSnapshot: func(_ context.Context, _ github.PR, _ []reviewloop.Policy) (reviewloop.Snapshot, error) {
 				return snapshot, nil
 			},
-			UnresolvedComments: func(_ context.Context, _ github.PR, _ []reviewloop.Policy) (map[string][]output.CommentView, error) {
-				return map[string][]output.CommentView{}, nil
-			},
-			ThreadComments: func(_ context.Context, _ github.PR, _ []reviewloop.Policy) (map[string][]output.CommentView, error) {
-				return allComments, nil
+			ThreadComments: func(_ context.Context, _ github.PR, _ []reviewloop.Policy) (map[string][]github.ThreadComment, error) {
+				return threadComments, nil
 			},
 			LoadConfig: func() (*config.Config, error) { return cfg, nil },
 			Out:        &buf,
@@ -273,9 +269,13 @@ func TestStatus_NewComments_OnlyAfterLastRally(t *testing.T) {
 	require.NoError(t, err)
 
 	out := buf.String()
-	// Only the after-rally comment should appear under new comments.
-	assert.Contains(t, out, "new comment")
-	assert.NotContains(t, out, "old comment")
+	// The after-rally comment must appear in the new-comments section.
+	assert.Contains(t, out, "New comments since last rally")
+	idx := strings.Index(out, "New comments since last rally")
+	require.GreaterOrEqual(t, idx, 0, "new-comments section must be present")
+	newSection := out[idx:]
+	assert.Contains(t, newSection, "new comment", "after-rally comment should appear in new-comments section")
+	assert.NotContains(t, newSection, "old comment", "before-rally comment must not appear in new-comments section")
 }
 
 func TestStatus_NewComments_AllNewWhenNoRally(t *testing.T) {
@@ -288,9 +288,15 @@ func TestStatus_NewComments_AllNewWhenNoRally(t *testing.T) {
 		HeadCommitOID: "commitABC",
 	}
 
-	allComments := map[string][]output.CommentView{
+	threadComments := map[string][]github.ThreadComment{
 		"user:alice": {
-			{Author: "alice", Body: "first comment ever", URL: "https://github.com/o/r/pull/1#r1", At: commentAt},
+			{
+				Author:    "alice",
+				Body:      "first comment ever",
+				URL:       "https://github.com/o/r/pull/1#r1",
+				CreatedAt: commentAt,
+				Resolved:  false,
+			},
 		},
 	}
 
@@ -306,11 +312,8 @@ func TestStatus_NewComments_AllNewWhenNoRally(t *testing.T) {
 			FetchSnapshot: func(_ context.Context, _ github.PR, _ []reviewloop.Policy) (reviewloop.Snapshot, error) {
 				return snapshot, nil
 			},
-			UnresolvedComments: func(_ context.Context, _ github.PR, _ []reviewloop.Policy) (map[string][]output.CommentView, error) {
-				return map[string][]output.CommentView{}, nil
-			},
-			ThreadComments: func(_ context.Context, _ github.PR, _ []reviewloop.Policy) (map[string][]output.CommentView, error) {
-				return allComments, nil
+			ThreadComments: func(_ context.Context, _ github.PR, _ []reviewloop.Policy) (map[string][]github.ThreadComment, error) {
+				return threadComments, nil
 			},
 			LoadConfig: func() (*config.Config, error) { return cfg, nil },
 			Out:        &buf,
@@ -366,9 +369,6 @@ func TestRequest_FiresOnlyCanRerequest(t *testing.T) {
 			FetchSnapshot: func(_ context.Context, _ github.PR, _ []reviewloop.Policy) (reviewloop.Snapshot, error) {
 				return snapshot, nil
 			},
-			UnresolvedComments: func(_ context.Context, _ github.PR, _ []reviewloop.Policy) (map[string][]output.CommentView, error) {
-				return map[string][]output.CommentView{}, nil
-			},
 			Triggerer:  triggerer,
 			LoadConfig: func() (*config.Config, error) { return cfg, nil },
 			Out:        &buf,
@@ -412,9 +412,6 @@ func TestRequest_ReviewerFlag_TargetsExactlyOne(t *testing.T) {
 			Resolver: resolver,
 			FetchSnapshot: func(_ context.Context, _ github.PR, _ []reviewloop.Policy) (reviewloop.Snapshot, error) {
 				return snapshot, nil
-			},
-			UnresolvedComments: func(_ context.Context, _ github.PR, _ []reviewloop.Policy) (map[string][]output.CommentView, error) {
-				return map[string][]output.CommentView{}, nil
 			},
 			Triggerer:  triggerer,
 			LoadConfig: func() (*config.Config, error) { return cfg, nil },
@@ -469,9 +466,6 @@ func TestRequest_BlockedReviewer_PrintsNoOpReason(t *testing.T) {
 			FetchSnapshot: func(_ context.Context, _ github.PR, _ []reviewloop.Policy) (reviewloop.Snapshot, error) {
 				return snapshot, nil
 			},
-			UnresolvedComments: func(_ context.Context, _ github.PR, _ []reviewloop.Policy) (map[string][]output.CommentView, error) {
-				return map[string][]output.CommentView{}, nil
-			},
 			Triggerer:  triggerer,
 			LoadConfig: func() (*config.Config, error) { return cfg, nil },
 			Out:        &buf,
@@ -508,9 +502,6 @@ func TestResolvePR_BareNumber_UsesCurrentRepo(t *testing.T) {
 			FetchSnapshot: func(_ context.Context, _ github.PR, _ []reviewloop.Policy) (reviewloop.Snapshot, error) {
 				return snapshot, nil
 			},
-			UnresolvedComments: func(_ context.Context, _ github.PR, _ []reviewloop.Policy) (map[string][]output.CommentView, error) {
-				return map[string][]output.CommentView{}, nil
-			},
 			LoadConfig: func() (*config.Config, error) { return cfg, nil },
 			Out:        &buf,
 		},
@@ -539,9 +530,6 @@ func TestResolvePR_URL_ParsedDirectly(t *testing.T) {
 			FetchSnapshot: func(_ context.Context, _ github.PR, _ []reviewloop.Policy) (reviewloop.Snapshot, error) {
 				return snapshot, nil
 			},
-			UnresolvedComments: func(_ context.Context, _ github.PR, _ []reviewloop.Policy) (map[string][]output.CommentView, error) {
-				return map[string][]output.CommentView{}, nil
-			},
 			LoadConfig: func() (*config.Config, error) { return cfg, nil },
 			Out:        &buf,
 		},
@@ -567,9 +555,6 @@ func TestResolvePR_NoArg_DelegatesToResolver(t *testing.T) {
 			Resolver: resolver,
 			FetchSnapshot: func(_ context.Context, _ github.PR, _ []reviewloop.Policy) (reviewloop.Snapshot, error) {
 				return snapshot, nil
-			},
-			UnresolvedComments: func(_ context.Context, _ github.PR, _ []reviewloop.Policy) (map[string][]output.CommentView, error) {
-				return map[string][]output.CommentView{}, nil
 			},
 			LoadConfig: func() (*config.Config, error) { return cfg, nil },
 			Out:        &buf,
@@ -622,9 +607,6 @@ func TestStatus_EmptyPolicies_ReturnsError(t *testing.T) {
 			FetchSnapshot: func(_ context.Context, _ github.PR, _ []reviewloop.Policy) (reviewloop.Snapshot, error) {
 				return reviewloop.Snapshot{}, nil
 			},
-			UnresolvedComments: func(_ context.Context, _ github.PR, _ []reviewloop.Policy) (map[string][]output.CommentView, error) {
-				return map[string][]output.CommentView{}, nil
-			},
 			LoadConfig: func() (*config.Config, error) { return cfg, nil },
 			Out:        &buf,
 		},
@@ -652,9 +634,6 @@ func TestRequest_EmptyPolicies_ReturnsError(t *testing.T) {
 			Resolver: resolver,
 			FetchSnapshot: func(_ context.Context, _ github.PR, _ []reviewloop.Policy) (reviewloop.Snapshot, error) {
 				return reviewloop.Snapshot{}, nil
-			},
-			UnresolvedComments: func(_ context.Context, _ github.PR, _ []reviewloop.Policy) (map[string][]output.CommentView, error) {
-				return map[string][]output.CommentView{}, nil
 			},
 			Triggerer:  triggerer,
 			LoadConfig: func() (*config.Config, error) { return cfg, nil },
@@ -684,9 +663,6 @@ func TestParseFormat_InvalidValue_ReturnsError(t *testing.T) {
 			Resolver: resolver,
 			FetchSnapshot: func(_ context.Context, _ github.PR, _ []reviewloop.Policy) (reviewloop.Snapshot, error) {
 				return snapshot, nil
-			},
-			UnresolvedComments: func(_ context.Context, _ github.PR, _ []reviewloop.Policy) (map[string][]output.CommentView, error) {
-				return map[string][]output.CommentView{}, nil
 			},
 			LoadConfig: func() (*config.Config, error) { return cfg, nil },
 			Out:        &buf,

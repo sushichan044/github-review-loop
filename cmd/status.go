@@ -63,17 +63,12 @@ func runStatus(ctx context.Context, d deps, resolveFormat formatResolver, args [
 		return fmt.Errorf("could not fetch PR state: %w", err)
 	}
 
-	unresolvedByKey, err := d.unresolvedComments(ctx, pr, policies)
-	if err != nil {
-		return fmt.Errorf("could not fetch unresolved comments: %w", err)
-	}
-
 	allCommentsByKey, err := d.threadComments(ctx, pr, policies)
 	if err != nil {
 		return fmt.Errorf("could not fetch thread comments: %w", err)
 	}
 
-	view := buildLoopView(loopState, snapshot, policies, unresolvedByKey, allCommentsByKey)
+	view := buildLoopView(loopState, snapshot, policies, allCommentsByKey)
 
 	return output.Render(d.out, view, format)
 }

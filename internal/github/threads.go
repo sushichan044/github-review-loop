@@ -7,9 +7,17 @@ import (
 
 	graphql "github.com/cli/shurcooL-graphql"
 
-	"github.com/sushichan044/github-review-loop/internal/output"
 	"github.com/sushichan044/github-review-loop/internal/reviewloop"
 )
+
+// ThreadComment holds a single review thread comment attributed to a reviewer.
+type ThreadComment struct {
+	Author    string
+	Body      string
+	URL       string
+	CreatedAt time.Time
+	Resolved  bool
+}
 
 // reviewThread holds extracted data for one PR review thread.
 type reviewThread struct {
@@ -48,8 +56,8 @@ type reviewThreadsQueryStruct struct {
 }
 
 // ThreadComments returns all thread comments (both resolved and unresolved) attributed
-// per reviewer, keyed by the reviewer's identity string ("type:name"). Each comment is
-// returned as an [output.CommentView] with Author, Body, URL, At, and Resolved populated.
+// per reviewer, keyed by the reviewer's identity string ("type:name", or "type" when name
+// empty). Each comment carries Author, Body, URL, CreatedAt, and Resolved.
 //
 // Attribution uses [ResolveIdentity] — the same logic as [FetchSnapshot] — so only threads
 // whose first-comment author resolves to a known policy identity are included.
@@ -58,13 +66,13 @@ func ThreadComments(
 	client *Client,
 	pr PR,
 	policies []reviewloop.Policy,
-) (map[string][]output.CommentView, error) {
+) (map[string][]ThreadComment, error) {
 	threads, err := fetchReviewThreads(ctx, client.gql, pr)
 	if err != nil {
 		return nil, err
 	}
 
-	result := make(map[string][]output.CommentView)
+	result := make(map[string][]ThreadComment)
 
 	for _, t := range threads {
 		if t.AuthorLogin == "" {
@@ -77,56 +85,12 @@ func ThreadComments(
 		}
 
 		key := identityKey(identity)
-		result[key] = append(result[key], output.CommentView{
-			Author:   t.AuthorLogin,
-			Body:     t.Body,
-			URL:      t.URL,
-			At:       t.CreatedAt,
-			Resolved: t.IsResolved,
-		})
-	}
-
-	return result, nil
-}
-
-// UnresolvedThreadComments returns the unresolved thread comments attributed per reviewer,
-// keyed by the reviewer's identity string ("type:name"). Each comment is returned as a
-// [output.CommentView] with Author, Body, and URL populated.
-//
-// Attribution uses [ResolveIdentity] — the same logic as [FetchSnapshot] — so only threads
-// whose first-comment author resolves to a known policy identity are included.
-func UnresolvedThreadComments(
-	ctx context.Context,
-	client *Client,
-	pr PR,
-	policies []reviewloop.Policy,
-) (map[string][]output.CommentView, error) {
-	threads, err := fetchReviewThreads(ctx, client.gql, pr)
-	if err != nil {
-		return nil, err
-	}
-
-	result := make(map[string][]output.CommentView)
-
-	for _, t := range threads {
-		if t.IsResolved {
-			continue
-		}
-		if t.AuthorLogin == "" {
-			continue
-		}
-
-		identity, ok := ResolveIdentity(t.AuthorLogin, policies)
-		if !ok {
-			continue
-		}
-
-		key := identityKey(identity)
-		result[key] = append(result[key], output.CommentView{
-			Author: t.AuthorLogin,
-			Body:   t.Body,
-			URL:    t.URL,
-			At:     t.CreatedAt,
+		result[key] = append(result[key], ThreadComment{
+			Author:    t.AuthorLogin,
+			Body:      t.Body,
+			URL:       t.URL,
+			CreatedAt: t.CreatedAt,
+			Resolved:  t.IsResolved,
 		})
 	}
 

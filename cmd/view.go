@@ -4,6 +4,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/sushichan044/github-review-loop/internal/github"
 	"github.com/sushichan044/github-review-loop/internal/output"
 	"github.com/sushichan044/github-review-loop/internal/reviewloop"
 )
@@ -11,20 +12,20 @@ import (
 // buildLoopView maps a [reviewloop.LoopState] and its corresponding policies into an
 // [output.LoopView], merging in per-reviewer unresolved and new comments.
 //
-// unresolvedByKey is keyed by "type:name" (or "type" when name is empty),
-// matching the format returned by [github.UnresolvedThreadComments].
+// allCommentsByKey is keyed by "type:name" (or "type" when name is empty),
+// matching the format returned by [github.ThreadComments]. It includes both resolved
+// and unresolved comments with their CreatedAt timestamps.
 //
-// allCommentsByKey is keyed the same way and returned by [github.ThreadComments];
-// it includes both resolved and unresolved comments with their CreatedAt timestamps.
-// NewComments for a reviewer = comments created after the reviewer's last rally time.
-// If the reviewer has no trigger (RallyCount 0), last-rally is the zero time so all
-// their comments count as new.
+// For each reviewer:
+//   - UnresolvedComments = comments with Resolved == false
+//   - NewComments = comments with CreatedAt.After(lastRally), where lastRally is
+//     the latest TriggerAction.At for that reviewer (zero time when no trigger exists,
+//     so all comments count as new).
 func buildLoopView(
 	state reviewloop.LoopState,
 	snapshot reviewloop.Snapshot,
 	policies []reviewloop.Policy,
-	unresolvedByKey map[string][]output.CommentView,
-	allCommentsByKey map[string][]output.CommentView,
+	allCommentsByKey map[string][]github.ThreadComment,
 ) output.LoopView {
 	policyByIdentity := make(map[reviewloop.ReviewerIdentity]reviewloop.Policy, len(policies))
 	for _, p := range policies {
@@ -39,10 +40,21 @@ func buildLoopView(
 
 		lastRally := lastRallyTime(rs.Identity, snapshot.Triggers)
 
+		var unresolvedComments []output.CommentView
 		var newComments []output.CommentView
+
 		for _, c := range allCommentsByKey[key] {
-			if c.At.After(lastRally) {
-				newComments = append(newComments, c)
+			cv := output.CommentView{
+				Author: c.Author,
+				Body:   c.Body,
+				URL:    c.URL,
+				At:     c.CreatedAt,
+			}
+			if !c.Resolved {
+				unresolvedComments = append(unresolvedComments, cv)
+			}
+			if c.CreatedAt.After(lastRally) {
+				newComments = append(newComments, cv)
 			}
 		}
 
@@ -55,7 +67,7 @@ func buildLoopView(
 			GoalMet:            rs.GoalMet,
 			CanRerequest:       rs.CanRerequest,
 			BlockReason:        rs.BlockReason,
-			UnresolvedComments: unresolvedByKey[key],
+			UnresolvedComments: unresolvedComments,
 			NewComments:        newComments,
 		})
 	}
