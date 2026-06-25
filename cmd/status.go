@@ -58,7 +58,7 @@ func runStatus(ctx context.Context, d deps, resolveFormat formatResolver, args [
 		return fmt.Errorf("no reviewers configured for %s/%s; check your config file", pr.Owner, pr.Repo)
 	}
 
-	loopState, err := fetchEvaluate(ctx, pr, d, policies)
+	loopState, snapshot, err := fetchEvaluate(ctx, pr, d, policies)
 	if err != nil {
 		return fmt.Errorf("could not fetch PR state: %w", err)
 	}
@@ -68,7 +68,12 @@ func runStatus(ctx context.Context, d deps, resolveFormat formatResolver, args [
 		return fmt.Errorf("could not fetch unresolved comments: %w", err)
 	}
 
-	view := buildLoopView(loopState, policies, unresolvedByKey)
+	allCommentsByKey, err := d.threadComments(ctx, pr, policies)
+	if err != nil {
+		return fmt.Errorf("could not fetch thread comments: %w", err)
+	}
+
+	view := buildLoopView(loopState, snapshot, policies, unresolvedByKey, allCommentsByKey)
 
 	return output.Render(d.out, view, format)
 }

@@ -3,6 +3,7 @@ package github_test
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -147,4 +148,110 @@ func TestUnresolvedThreadComments_MultipleReviewers(t *testing.T) {
 		output.CommentView{Author: "copilot", Body: "Copilot comment", URL: "https://example.com/c1"},
 		copilotComments[0],
 	)
+}
+
+// ---------------------------------------------------------------------------
+// ThreadComments tests
+// ---------------------------------------------------------------------------
+
+func TestThreadComments_IncludesResolvedAndUnresolved(t *testing.T) {
+	t.Parallel()
+
+	at := time.Date(2024, 6, 1, 12, 0, 0, 0, time.UTC)
+
+	fq := newFakeQuerier()
+	fq.on("PRTimeline", timelineFiller("head", nil, nil, nil))
+	fq.on("PRReviewThreads", threadsFiller([]fakeThread{
+		{AuthorLogin: "copilot", Body: "Fix this", URL: "https://example.com/c1", IsResolved: false, CreatedAt: at},
+		{
+			AuthorLogin: "copilot",
+			Body:        "Good job",
+			URL:         "https://example.com/c2",
+			IsResolved:  true,
+			CreatedAt:   at.Add(time.Hour),
+		},
+	}))
+
+	policies := []reviewloop.Policy{
+		{Identity: reviewloop.ReviewerIdentity{Type: reviewloop.ReviewerTypeGitHubCopilot}},
+	}
+
+	client := buildClient(fq)
+	result, err := github.ThreadComments(
+		context.Background(),
+		client,
+		github.PR{Owner: "o", Repo: "r", Number: 1},
+		policies,
+	)
+	require.NoError(t, err)
+
+	comments, ok := result["github-copilot"]
+	require.True(t, ok, "expected entry for github-copilot")
+	require.Len(t, comments, 2, "both resolved and unresolved should be returned")
+
+	assert.Equal(t, "copilot", comments[0].Author)
+	assert.Equal(t, "Fix this", comments[0].Body)
+	assert.Equal(t, at, comments[0].At)
+	assert.False(t, comments[0].Resolved)
+
+	assert.Equal(t, "copilot", comments[1].Author)
+	assert.Equal(t, "Good job", comments[1].Body)
+	assert.Equal(t, at.Add(time.Hour), comments[1].At)
+	assert.True(t, comments[1].Resolved)
+}
+
+func TestThreadComments_CreatedAtFlowsThrough(t *testing.T) {
+	t.Parallel()
+
+	at := time.Date(2024, 9, 15, 8, 30, 0, 0, time.UTC)
+
+	fq := newFakeQuerier()
+	fq.on("PRTimeline", timelineFiller("head", nil, nil, nil))
+	fq.on("PRReviewThreads", threadsFiller([]fakeThread{
+		{AuthorLogin: "alice", Body: "Please review", URL: "https://example.com/a1", IsResolved: false, CreatedAt: at},
+	}))
+
+	policies := []reviewloop.Policy{
+		{Identity: reviewloop.ReviewerIdentity{Type: reviewloop.ReviewerTypeUser, Name: "alice"}},
+	}
+
+	client := buildClient(fq)
+	result, err := github.ThreadComments(
+		context.Background(),
+		client,
+		github.PR{Owner: "o", Repo: "r", Number: 1},
+		policies,
+	)
+	require.NoError(t, err)
+
+	comments, ok := result["user:alice"]
+	require.True(t, ok, "expected entry for user:alice")
+	require.Len(t, comments, 1)
+	assert.Equal(t, at, comments[0].At)
+	assert.Equal(t, "alice", comments[0].Author)
+	assert.False(t, comments[0].Resolved)
+}
+
+func TestThreadComments_UnknownAuthorDropped(t *testing.T) {
+	t.Parallel()
+
+	fq := newFakeQuerier()
+	fq.on("PRTimeline", timelineFiller("head", nil, nil, nil))
+	fq.on("PRReviewThreads", threadsFiller([]fakeThread{
+		{AuthorLogin: "unknown-bot", Body: "Should be ignored", URL: "https://example.com/x1", IsResolved: false},
+	}))
+
+	policies := []reviewloop.Policy{
+		{Identity: reviewloop.ReviewerIdentity{Type: reviewloop.ReviewerTypeUser, Name: "alice"}},
+	}
+
+	client := buildClient(fq)
+	result, err := github.ThreadComments(
+		context.Background(),
+		client,
+		github.PR{Owner: "o", Repo: "r", Number: 1},
+		policies,
+	)
+	require.NoError(t, err)
+	assert.Empty(t, result)
 }

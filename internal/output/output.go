@@ -54,10 +54,11 @@ func DefaultFormat() Format {
 
 // CommentView is a rendered snapshot of a single review comment.
 type CommentView struct {
-	Author string
-	Body   string
-	URL    string
-	At     time.Time
+	Author   string
+	Body     string
+	URL      string
+	At       time.Time
+	Resolved bool
 }
 
 // ReviewerView is the complete rendering context for one reviewer.

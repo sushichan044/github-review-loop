@@ -16,6 +16,7 @@ type TestDeps struct {
 	Resolver           github.PRResolver
 	FetchSnapshot      func(ctx context.Context, pr github.PR, policies []reviewloop.Policy) (reviewloop.Snapshot, error)
 	UnresolvedComments func(ctx context.Context, pr github.PR, policies []reviewloop.Policy) (map[string][]output.CommentView, error)
+	ThreadComments     func(ctx context.Context, pr github.PR, policies []reviewloop.Policy) (map[string][]output.CommentView, error)
 	Triggerer          *github.Triggerer
 	LoadConfig         func() (*config.Config, error)
 	Out                io.Writer
@@ -29,10 +30,18 @@ func toDeps(td TestDeps) deps {
 		})
 	}
 
+	threadComments := td.ThreadComments
+	if threadComments == nil {
+		threadComments = func(_ context.Context, _ github.PR, _ []reviewloop.Policy) (map[string][]output.CommentView, error) {
+			return map[string][]output.CommentView{}, nil
+		}
+	}
+
 	return deps{
 		resolver:           td.Resolver,
 		fetchSnapshot:      td.FetchSnapshot,
 		unresolvedComments: td.UnresolvedComments,
+		threadComments:     threadComments,
 		triggerer:          triggerer,
 		loadConfig:         td.LoadConfig,
 		out:                td.Out,

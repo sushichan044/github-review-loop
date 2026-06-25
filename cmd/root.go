@@ -22,6 +22,7 @@ type deps struct {
 	resolver           github.PRResolver
 	fetchSnapshot      func(ctx context.Context, pr github.PR, policies []reviewloop.Policy) (reviewloop.Snapshot, error)
 	unresolvedComments func(ctx context.Context, pr github.PR, policies []reviewloop.Policy) (map[string][]output.CommentView, error)
+	threadComments     func(ctx context.Context, pr github.PR, policies []reviewloop.Policy) (map[string][]output.CommentView, error)
 	triggerer          *github.Triggerer
 	loadConfig         configLoader
 	out                io.Writer
@@ -80,6 +81,9 @@ func Execute(w io.Writer) error {
 		unresolvedComments: func(ctx context.Context, pr github.PR, policies []reviewloop.Policy) (map[string][]output.CommentView, error) {
 			return github.UnresolvedThreadComments(ctx, client, pr, policies)
 		},
+		threadComments: func(ctx context.Context, pr github.PR, policies []reviewloop.Policy) (map[string][]output.CommentView, error) {
+			return github.ThreadComments(ctx, client, pr, policies)
+		},
 		triggerer:  github.NewTriggerer(),
 		loadConfig: config.Load,
 		out:        w,
@@ -127,16 +131,18 @@ func resolvePR(
 }
 
 // fetchEvaluate is the shared fetch+evaluate pipeline used by both status and request.
+// It returns the raw Snapshot alongside the evaluated LoopState so callers can
+// access trigger timing for features like NewComments attribution.
 func fetchEvaluate(
 	ctx context.Context,
 	pr github.PR,
 	d deps,
 	policies []reviewloop.Policy,
-) (reviewloop.LoopState, error) {
+) (reviewloop.LoopState, reviewloop.Snapshot, error) {
 	snapshot, err := d.fetchSnapshot(ctx, pr, policies)
 	if err != nil {
-		return reviewloop.LoopState{}, err
+		return reviewloop.LoopState{}, reviewloop.Snapshot{}, err
 	}
 
-	return reviewloop.EvaluateLoop(policies, snapshot), nil
+	return reviewloop.EvaluateLoop(policies, snapshot), snapshot, nil
 }

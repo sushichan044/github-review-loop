@@ -219,6 +219,112 @@ func TestStatus_AgentFormat_NoBackgroundShellHintInHuman(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
+// NewComments tests
+// ---------------------------------------------------------------------------
+
+func TestStatus_NewComments_OnlyAfterLastRally(t *testing.T) {
+	t.Parallel()
+
+	rallyAt := time.Date(2024, 6, 1, 12, 0, 0, 0, time.UTC)
+	beforeRally := rallyAt.Add(-time.Hour)
+	afterRally := rallyAt.Add(time.Hour)
+
+	aliceIdentity := reviewloop.ReviewerIdentity{Type: reviewloop.ReviewerTypeUser, Name: "alice"}
+
+	snapshot := reviewloop.Snapshot{
+		HeadCommitOID: "commitABC",
+		Triggers: []reviewloop.TriggerAction{
+			{Reviewer: aliceIdentity, At: rallyAt},
+		},
+	}
+
+	// allComments: one before rally, one after rally.
+	allComments := map[string][]output.CommentView{
+		"user:alice": {
+			{Author: "alice", Body: "old comment", URL: "https://github.com/o/r/pull/1#r1", At: beforeRally},
+			{Author: "alice", Body: "new comment", URL: "https://github.com/o/r/pull/1#r2", At: afterRally},
+		},
+	}
+
+	resolver := &fakePRResolver{owner: "myorg", repo: "myrepo", number: 1}
+	cfg := minimalConfig("myorg", "myrepo")
+
+	var buf bytes.Buffer
+
+	err := cmd.RunStatusForTest(
+		context.Background(),
+		cmd.TestDeps{
+			Resolver: resolver,
+			FetchSnapshot: func(_ context.Context, _ github.PR, _ []reviewloop.Policy) (reviewloop.Snapshot, error) {
+				return snapshot, nil
+			},
+			UnresolvedComments: func(_ context.Context, _ github.PR, _ []reviewloop.Policy) (map[string][]output.CommentView, error) {
+				return map[string][]output.CommentView{}, nil
+			},
+			ThreadComments: func(_ context.Context, _ github.PR, _ []reviewloop.Policy) (map[string][]output.CommentView, error) {
+				return allComments, nil
+			},
+			LoadConfig: func() (*config.Config, error) { return cfg, nil },
+			Out:        &buf,
+		},
+		"human",
+		nil,
+	)
+	require.NoError(t, err)
+
+	out := buf.String()
+	// Only the after-rally comment should appear under new comments.
+	assert.Contains(t, out, "new comment")
+	assert.NotContains(t, out, "old comment")
+}
+
+func TestStatus_NewComments_AllNewWhenNoRally(t *testing.T) {
+	t.Parallel()
+
+	// No triggers for alice → last-rally is zero time → all comments count as new.
+	commentAt := time.Date(2024, 6, 1, 12, 0, 0, 0, time.UTC)
+
+	snapshot := reviewloop.Snapshot{
+		HeadCommitOID: "commitABC",
+	}
+
+	allComments := map[string][]output.CommentView{
+		"user:alice": {
+			{Author: "alice", Body: "first comment ever", URL: "https://github.com/o/r/pull/1#r1", At: commentAt},
+		},
+	}
+
+	resolver := &fakePRResolver{owner: "myorg", repo: "myrepo", number: 1}
+	cfg := minimalConfig("myorg", "myrepo")
+
+	var buf bytes.Buffer
+
+	err := cmd.RunStatusForTest(
+		context.Background(),
+		cmd.TestDeps{
+			Resolver: resolver,
+			FetchSnapshot: func(_ context.Context, _ github.PR, _ []reviewloop.Policy) (reviewloop.Snapshot, error) {
+				return snapshot, nil
+			},
+			UnresolvedComments: func(_ context.Context, _ github.PR, _ []reviewloop.Policy) (map[string][]output.CommentView, error) {
+				return map[string][]output.CommentView{}, nil
+			},
+			ThreadComments: func(_ context.Context, _ github.PR, _ []reviewloop.Policy) (map[string][]output.CommentView, error) {
+				return allComments, nil
+			},
+			LoadConfig: func() (*config.Config, error) { return cfg, nil },
+			Out:        &buf,
+		},
+		"human",
+		nil,
+	)
+	require.NoError(t, err)
+
+	out := buf.String()
+	assert.Contains(t, out, "first comment ever")
+}
+
+// ---------------------------------------------------------------------------
 // request command tests
 // ---------------------------------------------------------------------------
 

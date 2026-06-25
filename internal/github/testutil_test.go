@@ -32,6 +32,7 @@ type FakeThread struct {
 	Body        string
 	URL         string
 	IsResolved  bool
+	CreatedAt   time.Time
 }
 
 // injectTimeline directly sets fields on a *prTimelineQueryStruct so that
@@ -156,8 +157,9 @@ func injectThreads(q any, threads []FakeThread) {
 				Author struct {
 					Login string
 				}
-				Body string
-				URL  string
+				Body      string
+				URL       string
+				CreatedAt graphqlTime
 			}
 		} `graphql:"comments(first: 1)"`
 	}
@@ -171,10 +173,11 @@ func injectThreads(q any, threads []FakeThread) {
 				Author struct {
 					Login string
 				}
-				Body string
-				URL  string
+				Body      string
+				URL       string
+				CreatedAt graphqlTime
 			}{
-				{Body: t.Body, URL: t.URL},
+				{Body: t.Body, URL: t.URL, CreatedAt: graphqlTime{t.CreatedAt}},
 			}
 			n.Comments.Nodes[0].Author.Login = t.AuthorLogin
 		}
