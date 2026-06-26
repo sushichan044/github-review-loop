@@ -5,7 +5,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 
-	"github.com/sushichan044/go-template/internal/version"
+	"github.com/sushichan044/mergeable-please/internal/version"
 )
 
 func TestGet(t *testing.T) {

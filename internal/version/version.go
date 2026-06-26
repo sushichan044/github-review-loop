@@ -12,7 +12,7 @@ const (
 	gitShortHashLength = 7
 )
 
-// version can be set at build time via ldflags: -X github.com/sushichan044/gh-timeline/internal/version.version=vX.Y.Z.
+// version can be set at build time via ldflags: -X github.com/sushichan044/mergeable-please/internal/version.version=vX.Y.Z.
 var version string
 
 // Get returns the version information of the application.
