@@ -151,10 +151,10 @@ func fetchTimeline(_ context.Context, gql GraphQLQuerier, pr PR) (timelineResult
 	for skip := 0; ; skip += pageSize {
 		var q prTimelineQueryStruct
 		vars := map[string]any{
-			"owner":  graphql.String(pr.Owner),
-			"repo":   graphql.String(pr.Repo),
-			"number": graphql.Int(int32(pr.Number)), //nolint:gosec // PR numbers won't overflow int32
-			"skip":   graphql.Int(int32(skip)),
+			gqlVarOwner:  graphql.String(pr.Owner),
+			gqlVarRepo:   graphql.String(pr.Repo),
+			gqlVarNumber: graphql.Int(int32(pr.Number)), //nolint:gosec // PR numbers won't overflow int32
+			"skip":       graphql.Int(int32(skip)),
 		}
 
 		if err := gql.Query("PRTimeline", &q, vars); err != nil {

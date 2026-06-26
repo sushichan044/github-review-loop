@@ -9,13 +9,16 @@ import (
 func newInitCmd(d deps) *cobra.Command {
 	return &cobra.Command{
 		Use:   "init",
-		Short: "Create a default review-loop config in the current repository",
-		Long: `Create .github/review-loop.yml at the current repository root.
+		Short: "Create a default .mergeable-please.yml in the current repository",
+		Long: `Create .mergeable-please.yml at the current repository root.
 
-The file is a commented template. Edit it to list the reviewers you want to
-loop, then commit it so collaborators and CI use the same policy.
+The file is a commented template. Edit it to configure reviewer loops or to
+override defaults, then commit it so collaborators and CI use the same policy.
 
-It refuses to overwrite an existing config.`,
+Running mergeable-please check without this file uses built-in defaults
+(conflicts + required CI checks enabled, no reviewer loops).
+
+This command refuses to overwrite an existing config.`,
 		Args:         cobra.NoArgs,
 		SilenceUsage: true,
 		RunE: func(_ *cobra.Command, _ []string) error {

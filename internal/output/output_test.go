@@ -8,6 +8,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/sushichan044/mergeable-please/internal/core"
 	"github.com/sushichan044/mergeable-please/internal/core/reviewer"
 	"github.com/sushichan044/mergeable-please/internal/output"
 )
@@ -183,7 +184,7 @@ func TestRender_Active_CanRerequest(t *testing.T) {
 		assert.Contains(t, out, "user:alice", "reviewer identity in command")
 		// AGENT format MUST contain the background-shell wait hint
 		assert.Contains(t, out, "sleep", "agent format should include background-shell hint")
-		assert.Contains(t, out, "status", "agent format should reference status command")
+		assert.Contains(t, out, "check", "agent format should reference check command")
 	})
 }
 
@@ -378,6 +379,120 @@ func TestRender_StableOrder(t *testing.T) {
 			alicePos := strings.Index(out, "alice")
 			bobPos := strings.Index(out, "bob")
 			assert.Less(t, alicePos, bobPos, "alice (first in slice) should appear before bob")
+		})
+	}
+}
+
+// ── RenderCheckResult ─────────────────────────────────────────────────────────
+
+func renderCheckString(t *testing.T, r core.CheckResult, f output.Format) string {
+	t.Helper()
+	var sb strings.Builder
+	err := output.RenderCheckResult(&sb, r, f)
+	require.NoError(t, err)
+	return sb.String()
+}
+
+func TestRenderCheckResult_Satisfied_EmitsStatusLine(t *testing.T) {
+	t.Parallel()
+
+	r := core.CheckResult{Satisfied: true}
+
+	for _, f := range []output.Format{output.FormatHuman, output.FormatAgent} {
+		t.Run(string(f), func(t *testing.T) {
+			t.Parallel()
+			out := renderCheckString(t, r, f)
+			assert.Contains(t, out, "status: satisfied")
+		})
+	}
+}
+
+func TestRenderCheckResult_Blocked_EmitsStatusLine(t *testing.T) {
+	t.Parallel()
+
+	r := core.CheckResult{
+		Satisfied: false,
+		Blockers: []core.Condition{
+			{Kind: core.ConditionConflict, Severity: core.SeverityBlocker, Title: "Merge conflicts"},
+		},
+	}
+
+	for _, f := range []output.Format{output.FormatHuman, output.FormatAgent} {
+		t.Run(string(f), func(t *testing.T) {
+			t.Parallel()
+			out := renderCheckString(t, r, f)
+			assert.Contains(t, out, "status: blocked")
+		})
+	}
+}
+
+func TestRenderCheckResult_Blockers_Shown(t *testing.T) {
+	t.Parallel()
+
+	r := core.CheckResult{
+		Satisfied: false,
+		Blockers: []core.Condition{
+			{
+				Kind:            core.ConditionCheckFailing,
+				Severity:        core.SeverityBlocker,
+				Title:           "Required CI check failing",
+				Detail:          "build / lint",
+				SuggestedAction: "Fix lint errors and push.",
+				DrillInCmd:      "mergeable-please view --condition checks",
+			},
+		},
+	}
+
+	for _, f := range []output.Format{output.FormatHuman, output.FormatAgent} {
+		t.Run(string(f), func(t *testing.T) {
+			t.Parallel()
+			out := renderCheckString(t, r, f)
+			assert.Contains(t, out, "check-failing")
+			assert.Contains(t, out, "build / lint")
+		})
+	}
+}
+
+func TestRenderCheckResult_Advisories_AlwaysShown(t *testing.T) {
+	t.Parallel()
+
+	// Satisfied with only an advisory — advisory must still appear.
+	r := core.CheckResult{
+		Satisfied: true,
+		Advisories: []core.Condition{
+			{
+				Kind:     core.ConditionApprovalRequired,
+				Severity: core.SeverityAdvisory,
+				Title:    "Human approval required",
+				Detail:   "reviewDecision=REVIEW_REQUIRED",
+			},
+		},
+	}
+
+	for _, f := range []output.Format{output.FormatHuman, output.FormatAgent} {
+		t.Run(string(f), func(t *testing.T) {
+			t.Parallel()
+			out := renderCheckString(t, r, f)
+			assert.Contains(t, out, "status: satisfied", "satisfied with advisory only")
+			assert.Contains(t, out, "approval-required", "advisory must appear even when satisfied")
+		})
+	}
+}
+
+func TestRenderCheckResult_ReviewerLoop_SectionPresent(t *testing.T) {
+	t.Parallel()
+
+	loop := &reviewer.LoopState{Done: true}
+	r := core.CheckResult{
+		Satisfied:    true,
+		ReviewerLoop: loop,
+	}
+
+	for _, f := range []output.Format{output.FormatHuman, output.FormatAgent} {
+		t.Run(string(f), func(t *testing.T) {
+			t.Parallel()
+			out := renderCheckString(t, r, f)
+			assert.Contains(t, out, "Reviewer loop", "reviewer loop section must appear when ReviewerLoop is set")
 		})
 	}
 }

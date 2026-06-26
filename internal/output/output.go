@@ -10,6 +10,7 @@ import (
 
 	"github.com/jehiah/agentdetection"
 
+	"github.com/sushichan044/mergeable-please/internal/core"
 	"github.com/sushichan044/mergeable-please/internal/core/reviewer"
 )
 
@@ -297,7 +298,7 @@ func nextActionAgent(r ReviewerView) string {
 				"Ready to (re)request review.\n\n"+
 					"Run: `%s request --reviewer %s`\n\n"+
 					"After requesting, wait using a background shell rather than blocking, for example:\n"+
-					"```sh\nsleep 60 && %s status\n```\n"+
+					"```sh\nsleep 60 && %s check\n```\n"+
 					"Then re-check the status.",
 				programName, formatIdentity(r.Identity), programName,
 			)
@@ -338,6 +339,160 @@ func renderLoopDoneAgent(w io.Writer, v LoopView) error {
 	_, err := fmt.Fprint(w, sb.String())
 
 	return err
+}
+
+// ── CheckResult rendering ────────────────────────────────────────────────────
+
+// RenderCheckResult writes a [core.CheckResult] to w in the chosen format.
+// It always emits:
+//   - a "status: satisfied|blocked" line
+//   - the Blockers section (when non-empty)
+//   - the Advisories section (always, even when satisfied)
+//   - the reviewer-loop subsection (when ReviewerLoop is non-nil)
+func RenderCheckResult(w io.Writer, r core.CheckResult, f Format) error {
+	switch f {
+	case FormatAgent:
+		return renderCheckAgent(w, r)
+	case FormatHuman:
+		return renderCheckHuman(w, r)
+	default:
+		return fmt.Errorf("unsupported format %q", f)
+	}
+}
+
+// checkRenderStyles holds the format strings that differ between human and agent output.
+type checkRenderStyles struct {
+	blockersHeader     string
+	blockerItem        string // args: kind, title
+	blockerDetail      string // args: detail
+	blockerAction      string // args: action
+	blockerDrillIn     string // args: drillIn
+	advisoriesHeader   string
+	advisoryItem       string // args: kind, title
+	advisoryDetail     string // args: detail
+	reviewerLoopHeader string
+}
+
+func humanCheckStyles() checkRenderStyles {
+	return checkRenderStyles{
+		blockersHeader:     "\nBlockers:",
+		blockerItem:        "  [%s] %s\n",
+		blockerDetail:      "    %s\n",
+		blockerAction:      "    Action: %s\n",
+		blockerDrillIn:     "    Detail: %s\n",
+		advisoriesHeader:   "\nAdvisories (require human action):",
+		advisoryItem:       "  [%s] %s\n",
+		advisoryDetail:     "    %s\n",
+		reviewerLoopHeader: "\nReviewer loop:",
+	}
+}
+
+func agentCheckStyles() checkRenderStyles {
+	return checkRenderStyles{
+		blockersHeader:     "\n## Blockers",
+		blockerItem:        "\n### [%s] %s\n",
+		blockerDetail:      "- **Detail:** %s\n",
+		blockerAction:      "- **Action:** %s\n",
+		blockerDrillIn:     "- **Drill in:** `%s`\n",
+		advisoriesHeader:   "\n## Advisories (require human action)",
+		advisoryItem:       "\n### [%s] %s\n",
+		advisoryDetail:     "- **Detail:** %s\n",
+		reviewerLoopHeader: "\n## Reviewer loop",
+	}
+}
+
+func renderCheckHuman(w io.Writer, r core.CheckResult) error {
+	return renderCheck(w, r, humanCheckStyles())
+}
+
+func renderCheckAgent(w io.Writer, r core.CheckResult) error {
+	return renderCheck(w, r, agentCheckStyles())
+}
+
+func renderCheck(w io.Writer, r core.CheckResult, s checkRenderStyles) error {
+	statusStr := "satisfied"
+	if !r.Satisfied {
+		statusStr = "blocked"
+	}
+	if _, err := fmt.Fprintf(w, "status: %s\n", statusStr); err != nil {
+		return err
+	}
+	if err := writeBlockersSection(w, r.Blockers, s); err != nil {
+		return err
+	}
+	if err := writeAdvisoriesSection(w, r.Advisories, s); err != nil {
+		return err
+	}
+	if r.ReviewerLoop != nil {
+		if _, err := fmt.Fprintln(w, s.reviewerLoopHeader); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func writeBlockersSection(w io.Writer, blockers []core.Condition, s checkRenderStyles) error {
+	if len(blockers) == 0 {
+		return nil
+	}
+	if _, err := fmt.Fprintln(w, s.blockersHeader); err != nil {
+		return err
+	}
+	for _, c := range blockers {
+		if err := writeBlocker(w, c, s); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func writeAdvisoriesSection(w io.Writer, advisories []core.Condition, s checkRenderStyles) error {
+	if len(advisories) == 0 {
+		return nil
+	}
+	if _, err := fmt.Fprintln(w, s.advisoriesHeader); err != nil {
+		return err
+	}
+	for _, c := range advisories {
+		if err := writeAdvisory(w, c, s); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func writeBlocker(w io.Writer, c core.Condition, s checkRenderStyles) error {
+	if _, err := fmt.Fprintf(w, s.blockerItem, c.Kind, c.Title); err != nil {
+		return err
+	}
+	if c.Detail != "" {
+		if _, err := fmt.Fprintf(w, s.blockerDetail, c.Detail); err != nil {
+			return err
+		}
+	}
+	if c.SuggestedAction != "" {
+		if _, err := fmt.Fprintf(w, s.blockerAction, c.SuggestedAction); err != nil {
+			return err
+		}
+	}
+	if c.DrillInCmd != "" {
+		if _, err := fmt.Fprintf(w, s.blockerDrillIn, c.DrillInCmd); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func writeAdvisory(w io.Writer, c core.Condition, s checkRenderStyles) error {
+	if _, err := fmt.Fprintf(w, s.advisoryItem, c.Kind, c.Title); err != nil {
+		return err
+	}
+	if c.Detail != "" {
+		if _, err := fmt.Fprintf(w, s.advisoryDetail, c.Detail); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────

@@ -15,22 +15,31 @@ import (
 
 // --- Parse tests ---
 
-func TestParse_UserReviewer(t *testing.T) {
+func TestParse_FullConfig(t *testing.T) {
 	t.Parallel()
 
 	yaml := `
-reviewers:
-  - type: user
-    name: alice
-    goal: { approved: true }
-    max-rallies: 3
-    trigger: "ping @alice"
+git:
+  remote: upstream
+  conflicts-resolved: false
+github:
+  rulesets: false
+  reviewers:
+    - type: user
+      name: alice
+      goal: { approved: true }
+      max-rallies: 3
+      trigger: "ping @alice"
 `
 	cfg, err := config.Parse([]byte(yaml))
 	require.NoError(t, err)
-	require.Len(t, cfg.Reviewers, 1)
 
-	r := cfg.Reviewers[0]
+	assert.Equal(t, "upstream", cfg.Git.Remote)
+	assert.False(t, cfg.Git.ConflictsResolved)
+	assert.False(t, cfg.GitHub.Rulesets)
+	require.Len(t, cfg.GitHub.Reviewers, 1)
+
+	r := cfg.GitHub.Reviewers[0]
 	assert.Equal(t, "user", r.Type)
 	assert.Equal(t, "alice", r.Name)
 	assert.True(t, r.Goal.Approved)
@@ -43,15 +52,16 @@ func TestParse_CopilotReviewer(t *testing.T) {
 	t.Parallel()
 
 	yaml := `
-reviewers:
-  - type: github-copilot
-    goal: { all-conversations-resolved: true }
+github:
+  reviewers:
+    - type: github-copilot
+      goal: { all-conversations-resolved: true }
 `
 	cfg, err := config.Parse([]byte(yaml))
 	require.NoError(t, err)
-	require.Len(t, cfg.Reviewers, 1)
+	require.Len(t, cfg.GitHub.Reviewers, 1)
 
-	r := cfg.Reviewers[0]
+	r := cfg.GitHub.Reviewers[0]
 	assert.Equal(t, "github-copilot", r.Type)
 	assert.Empty(t, r.Name)
 	assert.False(t, r.Goal.Approved)
@@ -62,29 +72,44 @@ func TestParse_DefaultMaxRallies(t *testing.T) {
 	t.Parallel()
 
 	yaml := `
-reviewers:
-  - type: github-copilot
-    goal: { all-conversations-resolved: true }
+github:
+  reviewers:
+    - type: github-copilot
+      goal: { all-conversations-resolved: true }
 `
 	cfg, err := config.Parse([]byte(yaml))
 	require.NoError(t, err)
-	assert.Equal(t, 5, cfg.Reviewers[0].MaxRallies)
+	assert.Equal(t, 5, cfg.GitHub.Reviewers[0].MaxRallies)
+}
+
+func TestParse_DefaultsAppliedWhenSectionsAbsent(t *testing.T) {
+	t.Parallel()
+
+	// Empty document → all defaults.
+	cfg, err := config.Parse([]byte(""))
+	require.NoError(t, err)
+
+	assert.Equal(t, "origin", cfg.Git.Remote)
+	assert.True(t, cfg.Git.ConflictsResolved)
+	assert.True(t, cfg.GitHub.Rulesets)
+	assert.Empty(t, cfg.GitHub.Reviewers)
 }
 
 func TestParse_GithubApp_WithTrigger(t *testing.T) {
 	t.Parallel()
 
 	yaml := `
-reviewers:
-  - type: github-app
-    name: coderabbitai
-    goal: { approved: true }
-    trigger: "@coderabbitai review"
+github:
+  reviewers:
+    - type: github-app
+      name: coderabbitai
+      goal: { approved: true }
+      trigger: "@coderabbitai review"
 `
 	cfg, err := config.Parse([]byte(yaml))
 	require.NoError(t, err)
 
-	r := cfg.Reviewers[0]
+	r := cfg.GitHub.Reviewers[0]
 	assert.Equal(t, "github-app", r.Type)
 	assert.Equal(t, "coderabbitai", r.Name)
 	assert.Equal(t, "@coderabbitai review", r.Trigger)
@@ -97,10 +122,11 @@ func TestParse_Validation_GoalBothTrue(t *testing.T) {
 	t.Parallel()
 
 	yaml := `
-reviewers:
-  - type: user
-    name: alice
-    goal: { approved: true, all-conversations-resolved: true }
+github:
+  reviewers:
+    - type: user
+      name: alice
+      goal: { approved: true, all-conversations-resolved: true }
 `
 	_, err := config.Parse([]byte(yaml))
 	assert.Error(t, err)
@@ -110,10 +136,11 @@ func TestParse_Validation_GoalNeitherTrue(t *testing.T) {
 	t.Parallel()
 
 	yaml := `
-reviewers:
-  - type: user
-    name: alice
-    goal: {}
+github:
+  reviewers:
+    - type: user
+      name: alice
+      goal: {}
 `
 	_, err := config.Parse([]byte(yaml))
 	assert.Error(t, err)
@@ -123,10 +150,11 @@ func TestParse_Validation_BadType(t *testing.T) {
 	t.Parallel()
 
 	yaml := `
-reviewers:
-  - type: bot
-    name: alice
-    goal: { approved: true }
+github:
+  reviewers:
+    - type: bot
+      name: alice
+      goal: { approved: true }
 `
 	_, err := config.Parse([]byte(yaml))
 	assert.Error(t, err)
@@ -136,9 +164,10 @@ func TestParse_Validation_UserMissingName(t *testing.T) {
 	t.Parallel()
 
 	yaml := `
-reviewers:
-  - type: user
-    goal: { approved: true }
+github:
+  reviewers:
+    - type: user
+      goal: { approved: true }
 `
 	_, err := config.Parse([]byte(yaml))
 	assert.Error(t, err)
@@ -148,9 +177,10 @@ func TestParse_Validation_GithubAppMissingName(t *testing.T) {
 	t.Parallel()
 
 	yaml := `
-reviewers:
-  - type: github-app
-    goal: { approved: true }
+github:
+  reviewers:
+    - type: github-app
+      goal: { approved: true }
 `
 	_, err := config.Parse([]byte(yaml))
 	assert.Error(t, err)
@@ -171,12 +201,14 @@ func TestPolicies_MapsEachReviewer(t *testing.T) {
 	t.Parallel()
 
 	cfg := &config.Config{
-		Reviewers: []config.ReviewerConfig{
-			{Type: "user", Name: "alice", Goal: config.GoalConfig{Approved: true}, MaxRallies: 3},
-			{
-				Type:       "github-copilot",
-				Goal:       config.GoalConfig{AllConversationsResolved: true},
-				MaxRallies: 5,
+		GitHub: config.GitHubConfig{
+			Reviewers: []config.ReviewerConfig{
+				{Type: "user", Name: "alice", Goal: config.GoalConfig{Approved: true}, MaxRallies: 3},
+				{
+					Type:       "github-copilot",
+					Goal:       config.GoalConfig{AllConversationsResolved: true},
+					MaxRallies: 5,
+				},
 			},
 		},
 	}
@@ -225,8 +257,10 @@ func TestPolicies_GoalMapping(t *testing.T) {
 			t.Parallel()
 
 			cfg := &config.Config{
-				Reviewers: []config.ReviewerConfig{
-					{Type: "github-copilot", Goal: tc.goal, MaxRallies: 5},
+				GitHub: config.GitHubConfig{
+					Reviewers: []config.ReviewerConfig{
+						{Type: "github-copilot", Goal: tc.goal, MaxRallies: 5},
+					},
 				},
 			}
 			policies, err := config.Policies(cfg)
@@ -241,13 +275,15 @@ func TestPolicies_TriggerCarried(t *testing.T) {
 	t.Parallel()
 
 	cfg := &config.Config{
-		Reviewers: []config.ReviewerConfig{
-			{
-				Type:       "github-app",
-				Name:       "coderabbitai",
-				Goal:       config.GoalConfig{Approved: true},
-				MaxRallies: 5,
-				Trigger:    "@coderabbitai review",
+		GitHub: config.GitHubConfig{
+			Reviewers: []config.ReviewerConfig{
+				{
+					Type:       "github-app",
+					Name:       "coderabbitai",
+					Goal:       config.GoalConfig{Approved: true},
+					MaxRallies: 5,
+					Trigger:    "@coderabbitai review",
+				},
 			},
 		},
 	}
@@ -260,7 +296,7 @@ func TestPolicies_TriggerCarried(t *testing.T) {
 // --- Load / Init tests ---
 
 // gitRepoWithConfig creates a fake git repo under a temp dir, optionally writing
-// a config file at .github/<name>, and returns the directory from which config
+// a config file at the root level, and returns the directory from which config
 // discovery should start (the repo root joined with workDir).
 func gitRepoWithConfig(t *testing.T, name, content, workDir string) string {
 	t.Helper()
@@ -269,9 +305,7 @@ func gitRepoWithConfig(t *testing.T, name, content, workDir string) string {
 	require.NoError(t, os.MkdirAll(filepath.Join(root, ".git"), 0o755))
 
 	if name != "" {
-		ghDir := filepath.Join(root, ".github")
-		require.NoError(t, os.MkdirAll(ghDir, 0o755))
-		require.NoError(t, os.WriteFile(filepath.Join(ghDir, name), []byte(content), 0o600))
+		require.NoError(t, os.WriteFile(filepath.Join(root, name), []byte(content), 0o600))
 	}
 
 	start := root
@@ -286,65 +320,74 @@ func TestLoad_ValidFile(t *testing.T) {
 	t.Parallel()
 
 	content := `
-reviewers:
-  - type: github-copilot
-    goal: { all-conversations-resolved: true }
+github:
+  reviewers:
+    - type: github-copilot
+      goal: { all-conversations-resolved: true }
 `
-	start := gitRepoWithConfig(t, "review-loop.yml", content, "")
+	start := gitRepoWithConfig(t, ".mergeable-please.yml", content, "")
 
 	cfg, err := config.LoadFrom(start)
 	require.NoError(t, err)
-	require.Len(t, cfg.Reviewers, 1)
-	assert.Equal(t, "github-copilot", cfg.Reviewers[0].Type)
+	require.Len(t, cfg.GitHub.Reviewers, 1)
+	assert.Equal(t, "github-copilot", cfg.GitHub.Reviewers[0].Type)
 }
 
 func TestLoad_YamlExtensionAccepted(t *testing.T) {
 	t.Parallel()
 
 	content := `
-reviewers:
-  - type: github-copilot
-    goal: { all-conversations-resolved: true }
+github:
+  reviewers:
+    - type: github-copilot
+      goal: { all-conversations-resolved: true }
 `
-	start := gitRepoWithConfig(t, "review-loop.yaml", content, "")
+	start := gitRepoWithConfig(t, ".mergeable-please.yaml", content, "")
 
 	cfg, err := config.LoadFrom(start)
 	require.NoError(t, err)
-	require.Len(t, cfg.Reviewers, 1)
+	require.Len(t, cfg.GitHub.Reviewers, 1)
 }
 
 func TestLoad_FoundFromSubdirectory(t *testing.T) {
 	t.Parallel()
 
 	content := `
-reviewers:
-  - type: github-copilot
-    goal: { all-conversations-resolved: true }
+github:
+  reviewers:
+    - type: github-copilot
+      goal: { all-conversations-resolved: true }
 `
-	start := gitRepoWithConfig(t, "review-loop.yml", content, filepath.Join("pkg", "deep"))
+	start := gitRepoWithConfig(t, ".mergeable-please.yml", content, filepath.Join("pkg", "deep"))
 
 	cfg, err := config.LoadFrom(start)
 	require.NoError(t, err)
-	require.Len(t, cfg.Reviewers, 1)
+	require.Len(t, cfg.GitHub.Reviewers, 1)
 }
 
-func TestLoad_MissingFile_ReturnsErrConfigNotFound(t *testing.T) {
+func TestLoad_NoFile_ReturnsDefaultConfig(t *testing.T) {
 	t.Parallel()
 
+	// A valid git repo with no config file → should return defaults, not an error.
 	start := gitRepoWithConfig(t, "", "", "")
 
-	_, err := config.LoadFrom(start)
-	require.Error(t, err)
-	assert.ErrorIs(t, err, config.ErrConfigNotFound)
+	cfg, err := config.LoadFrom(start)
+	require.NoError(t, err)
+	require.NotNil(t, cfg)
+	assert.Equal(t, "origin", cfg.Git.Remote)
+	assert.True(t, cfg.Git.ConflictsResolved)
+	assert.True(t, cfg.GitHub.Rulesets)
+	assert.Empty(t, cfg.GitHub.Reviewers)
 }
 
-func TestLoad_NotInGitRepo_ReturnsErrConfigNotFound(t *testing.T) {
+func TestLoad_NotInGitRepo_ReturnsDefaultConfig(t *testing.T) {
 	t.Parallel()
 
-	// A temp dir with no .git anywhere up the tree.
-	_, err := config.LoadFrom(t.TempDir())
-	require.Error(t, err)
-	assert.ErrorIs(t, err, config.ErrConfigNotFound)
+	// A temp dir with no .git anywhere up the tree → should return defaults, not error.
+	cfg, err := config.LoadFrom(t.TempDir())
+	require.NoError(t, err)
+	require.NotNil(t, cfg)
+	assert.Equal(t, "origin", cfg.Git.Remote)
 }
 
 func TestInit_WritesParseableDefault(t *testing.T) {
@@ -354,18 +397,20 @@ func TestInit_WritesParseableDefault(t *testing.T) {
 
 	path, err := config.InitAt(start)
 	require.NoError(t, err)
-	assert.True(t, strings.HasSuffix(path, filepath.Join(".github", "review-loop.yml")), "path: %s", path)
+	assert.True(t, strings.HasSuffix(path, ".mergeable-please.yml"), "path: %s", path)
 
 	// The written file must load cleanly.
 	cfg, err := config.LoadFrom(start)
 	require.NoError(t, err)
-	require.NotEmpty(t, cfg.Reviewers)
+	require.NotNil(t, cfg)
+	// Default template has explicit keys, so defaults should be set.
+	assert.Equal(t, "origin", cfg.Git.Remote)
 }
 
 func TestInit_RefusesToOverwrite(t *testing.T) {
 	t.Parallel()
 
-	start := gitRepoWithConfig(t, "review-loop.yml", "reviewers: []\n", "")
+	start := gitRepoWithConfig(t, ".mergeable-please.yml", "git:\n  remote: origin\n", "")
 
 	_, err := config.InitAt(start)
 	require.Error(t, err)

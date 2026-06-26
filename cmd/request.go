@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -11,7 +12,7 @@ import (
 	"github.com/sushichan044/mergeable-please/internal/core/reviewer"
 )
 
-func newRequestCmd(d deps, resolveFormat formatResolver) *cobra.Command {
+func newRequestCmd(d deps, formatFlag *string) *cobra.Command {
 	var reviewerFlag string
 
 	cmd := &cobra.Command{
@@ -25,10 +26,13 @@ func newRequestCmd(d deps, resolveFormat formatResolver) *cobra.Command {
   - GitHub URL (e.g. https://github.com/owner/repo/pull/42)
 
 By default, all reviewers with CanRerequest == true are targeted.
-Use --reviewer type:name to target a single reviewer.`,
+Use --reviewer type:name to target a single reviewer.
+
+Requires reviewers to be configured in .mergeable-please.yml.`,
 		Args:         cobra.MaximumNArgs(1),
 		SilenceUsage: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			resolveFormat := makeFormatResolver(formatFlag)
 			return runRequest(cmd.Context(), d, resolveFormat, reviewerFlag, args)
 		},
 	}
@@ -48,14 +52,16 @@ func runRequest(
 	reviewerFlag string,
 	args []string,
 ) error {
-	// Validate the --format flag eagerly so users get immediate feedback on bad values.
 	if _, err := resolveFormat(); err != nil {
 		return err
 	}
 
-	policies, ok, err := resolvePolicies(d)
-	if err != nil || !ok {
+	policies, err := resolvePolicies(d)
+	if err != nil {
 		return err
+	}
+	if len(policies) == 0 {
+		return errors.New("no reviewers configured in .mergeable-please.yml")
 	}
 
 	var prArg string
@@ -68,26 +74,24 @@ func runRequest(
 		return fmt.Errorf("could not resolve PR: %w", err)
 	}
 
-	loopState, _, err := fetchEvaluate(ctx, pr, d, policies)
+	snapshot, err := d.fetchSnapshot(ctx, pr, policies)
 	if err != nil {
 		return fmt.Errorf("could not fetch PR state: %w", err)
 	}
 
+	loopState := reviewer.EvaluateLoop(policies, snapshot)
 	targets := selectTargets(loopState.Reviewers, policies, reviewerFlag)
 
-	return fireRequests(d, pr, policies, targets)
+	return fireRequests(d, pr, targets)
 }
 
-// reviewerTarget pairs a [reviewer.State] with its [reviewer.Policy].
+// reviewerTarget pairs a reviewer.State with its reviewer.Policy.
 type reviewerTarget struct {
 	state  reviewer.State
 	policy reviewer.Policy
 }
 
-// selectTargets filters the reviewer states to those that should be acted upon.
-// When reviewerFlag is non-empty, only the reviewer with that identity is included.
-// Otherwise, all reviewers are included (both eligible and blocked, so the caller
-// can print appropriate no-op messages).
+// selectTargets filters reviewer states to those that should be acted on.
 func selectTargets(
 	states []reviewer.State,
 	policies []reviewer.Policy,
@@ -119,28 +123,15 @@ func matchesFlag(id reviewer.Identity, flag string) bool {
 	return strings.EqualFold(identityKeyFromReviewerIdentity(id), flag)
 }
 
-// fireRequests iterates over targets, firing re-requests for eligible reviewers
-// and printing no-op messages for blocked ones.
-func fireRequests(
-	d deps,
-	pr github.PR,
-	_ []reviewer.Policy,
-	targets []reviewerTarget,
-) error {
+// fireRequests iterates over targets, firing re-requests for eligible reviewers.
+func fireRequests(d deps, pr github.PR, targets []reviewerTarget) error {
 	for _, t := range targets {
 		idStr := identityKeyFromReviewerIdentity(t.state.Identity)
 
 		if !t.state.CanRerequest {
-			_, err := fmt.Fprintf(
-				d.out,
-				"SKIP  %s — %s\n",
-				idStr,
-				t.state.BlockReason,
-			)
-			if err != nil {
+			if _, err := fmt.Fprintf(d.out, "SKIP  %s — %s\n", idStr, t.state.BlockReason); err != nil {
 				return err
 			}
-
 			continue
 		}
 
@@ -148,8 +139,7 @@ func fireRequests(
 			return fmt.Errorf("failed to request review from %s: %w", idStr, err)
 		}
 
-		_, err := fmt.Fprintf(d.out, "FIRED %s\n", idStr)
-		if err != nil {
+		if _, err := fmt.Fprintf(d.out, "FIRED %s\n", idStr); err != nil {
 			return err
 		}
 	}

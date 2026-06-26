@@ -116,10 +116,10 @@ func fetchReviewThreads(_ context.Context, gql GraphQLQuerier, pr PR) ([]reviewT
 	for {
 		var q reviewThreadsQueryStruct
 		vars := map[string]any{
-			"owner":  graphql.String(pr.Owner),
-			"repo":   graphql.String(pr.Repo),
-			"number": graphql.Int(int32(pr.Number)), //nolint:gosec // PR numbers won't overflow int32
-			"cursor": cursor,
+			gqlVarOwner:  graphql.String(pr.Owner),
+			gqlVarRepo:   graphql.String(pr.Repo),
+			gqlVarNumber: graphql.Int(int32(pr.Number)), //nolint:gosec // PR numbers won't overflow int32
+			"cursor":     cursor,
 		}
 
 		if err := gql.Query("PRReviewThreads", &q, vars); err != nil {

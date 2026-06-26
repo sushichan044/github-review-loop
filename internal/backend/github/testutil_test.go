@@ -1,7 +1,48 @@
-//nolint:testpackage // White-box test helpers: must access unexported query structs (prTimelineQueryStruct, reviewThreadsQueryStruct).
+//nolint:testpackage // White-box test helpers: must access unexported query structs (prTimelineQueryStruct, reviewThreadsQueryStruct, prMergeabilityQueryStruct).
 package github
 
 import "time"
+
+// FakePRMergeResult is test data for a prMergeabilityQueryStruct response.
+type FakePRMergeResult struct {
+	Mergeable        string
+	MergeStateStatus string
+	ReviewDecision   string
+	HeadRefOid       string
+	Checks           []FakeCheck
+}
+
+// FakeCheck is one check context node (CheckRun kind) for test injection.
+type FakeCheck struct {
+	Name       string
+	Status     string
+	Conclusion string
+	IsRequired bool
+}
+
+// injectPRMergeResult directly sets fields on *prMergeabilityQueryStruct.
+func injectPRMergeResult(q any, r FakePRMergeResult) {
+	query, ok := q.(*prMergeabilityQueryStruct)
+	if !ok {
+		return
+	}
+	query.Repository.PullRequest.Mergeable = r.Mergeable
+	query.Repository.PullRequest.MergeStateStatus = r.MergeStateStatus
+	query.Repository.PullRequest.ReviewDecision = r.ReviewDecision
+	query.Repository.PullRequest.HeadRefOid = r.HeadRefOid
+
+	nodes := make([]checkContextNode, 0, len(r.Checks))
+	for _, c := range r.Checks {
+		var n checkContextNode
+		// All fake checks are mapped as CheckRun nodes.
+		n.CheckRun.Name = c.Name
+		n.CheckRun.Status = c.Status
+		n.CheckRun.Conclusion = c.Conclusion
+		n.CheckRun.IsRequired = c.IsRequired
+		nodes = append(nodes, n)
+	}
+	query.Repository.PullRequest.StatusCheckRollup.Contexts.Nodes = nodes
+}
 
 // FakeReview is test data for a PullRequestReview timeline node.
 type FakeReview struct {

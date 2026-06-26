@@ -1,9 +1,10 @@
 // Package config loads, parses, and resolves the mergeable-please config file.
 //
-// Config lives in the repository it applies to, at .github/review-loop.yml
-// (a .yaml extension is also accepted). Committing it is how a review-loop
-// policy is shared with collaborators and CI — there is no machine-global
-// config, because a per-machine file cannot enforce policy across a team.
+// Config lives at the repository root as .mergeable-please.yml (or .yaml).
+// Committing it is how reviewer-loop policies are shared with collaborators and CI.
+//
+// The config file is optional: Load returns a fully-defaulted Config when no
+// file is found, so `mergeable-please check` works out of the box with no setup.
 package config
 
 import (
@@ -20,31 +21,22 @@ import (
 )
 
 const (
-	configDir         = ".github"
-	defaultConfigName = "review-loop.yml"
+	defaultConfigName = ".mergeable-please.yml"
 	defaultMaxRallies = 5
 )
 
-// configNames are the accepted config file names, tried in order. Both .yml and
-// .yaml are accepted so users are not tripped up by the extension; init writes
-// defaultConfigName.
+// configNames are the accepted config file names, tried in order.
 func configNames() []string {
-	return []string{defaultConfigName, "review-loop.yaml"}
+	return []string{defaultConfigName, ".mergeable-please.yaml"}
 }
 
-// defaultConfig is the commented template written by Init.
+// defaultConfigTemplate is the commented template written by Init.
 //
-//go:embed templates/review-loop.yml
-var defaultConfig []byte
+//go:embed templates/mergeable-please.yml
+var defaultConfigTemplate []byte
 
-// ErrConfigNotFound is returned by Load when no config file exists for the
-// current repository (including when the working directory is not inside a
-// git repository). Callers treat this as "not configured yet" rather than a
-// hard failure.
-var ErrConfigNotFound = errors.New("config: file not found")
-
-// ErrConfigExists is returned by Init when a config file already exists, so it
-// never clobbers a committed policy.
+// ErrConfigExists is returned by Init when a config file already exists, so a
+// committed policy is never overwritten.
 var ErrConfigExists = errors.New("config: file already exists")
 
 // GoalConfig holds the two mutually exclusive goal flags as parsed from YAML.
@@ -62,9 +54,22 @@ type ReviewerConfig struct {
 	Trigger    string     `zog:"trigger"`
 }
 
-// Config is the parsed, validated representation of review-loop.yml.
-type Config struct {
+// GitConfig holds git-layer settings.
+type GitConfig struct {
+	Remote            string `zog:"remote"`
+	ConflictsResolved bool   `zog:"conflicts-resolved"`
+}
+
+// GitHubConfig holds GitHub-specific settings.
+type GitHubConfig struct {
+	Rulesets  bool             `zog:"rulesets"`
 	Reviewers []ReviewerConfig `zog:"reviewers"`
+}
+
+// Config is the parsed, validated representation of .mergeable-please.yml.
+type Config struct {
+	Git    GitConfig    `zog:"git"`
+	GitHub GitHubConfig `zog:"github"`
 }
 
 func buildSchema() *z.StructSchema {
@@ -103,16 +108,47 @@ func buildSchema() *z.StructSchema {
 		return true
 	})
 
-	return z.Struct(z.Shape{
+	gitSchema := z.Struct(z.Shape{
+		"Remote":            z.String().Default("origin"),
+		"ConflictsResolved": z.Bool().Default(true),
+	})
+
+	githubSchema := z.Struct(z.Shape{
+		"Rulesets":  z.Bool().Default(true),
 		"Reviewers": z.Slice(reviewerSchema),
+	})
+
+	return z.Struct(z.Shape{
+		"Git":    gitSchema,
+		"GitHub": githubSchema,
 	})
 }
 
+// defaultConfig returns a Config with all defaults applied.
+func defaultConfig() *Config {
+	return &Config{
+		Git: GitConfig{
+			Remote:            "origin",
+			ConflictsResolved: true,
+		},
+		GitHub: GitHubConfig{
+			Rulesets:  true,
+			Reviewers: []ReviewerConfig{},
+		},
+	}
+}
+
 // Parse unmarshals YAML data and validates it with zog.
+// The input must use the git:/github: schema.
 func Parse(data []byte) (*Config, error) {
 	var raw map[string]any
 	if err := yaml.Unmarshal(data, &raw); err != nil {
 		return nil, fmt.Errorf("config: yaml parse error: %w", err)
+	}
+
+	// Treat an empty/nil document as defaults.
+	if raw == nil {
+		return defaultConfig(), nil
 	}
 
 	var cfg Config
@@ -122,10 +158,12 @@ func Parse(data []byte) (*Config, error) {
 	return &cfg, nil
 }
 
-// Load finds the config for the current repository and parses it. It walks up
-// from the working directory to the repository root, then reads
-// .github/review-loop.yml (or .yaml). It returns ErrConfigNotFound when no such
-// file exists, or when the working directory is not inside a git repository.
+// Load finds the config for the current repository and parses it.
+// It walks up from the working directory to the repository root, then reads
+// .mergeable-please.yml (or .yaml) at the root.
+//
+// When no config file is found, Load returns a fully-defaulted Config (no error).
+// This allows `mergeable-please check` to work out of the box without any setup.
 func Load() (*Config, error) {
 	start, err := os.Getwd()
 	if err != nil {
@@ -137,12 +175,13 @@ func Load() (*Config, error) {
 func loadFrom(start string) (*Config, error) {
 	root, err := repoRootFrom(start)
 	if err != nil {
-		// Not inside a git repo => there is no repo-local config to find.
-		return nil, fmt.Errorf("%w: %w", ErrConfigNotFound, err)
+		// Not inside a git repo: return defaults rather than failing.
+		// Commands that need git context (PR resolution) will fail on their own.
+		return defaultConfig(), nil //nolint:nilerr // intentional: no repo → use defaults; caller will fail on git ops
 	}
 
 	for _, name := range configNames() {
-		path := filepath.Join(root, configDir, name)
+		path := filepath.Join(root, name)
 		data, readErr := os.ReadFile(path)
 		if readErr == nil {
 			return Parse(data)
@@ -152,13 +191,13 @@ func loadFrom(start string) (*Config, error) {
 		}
 	}
 
-	return nil, fmt.Errorf("%w under %s", ErrConfigNotFound, filepath.Join(root, configDir))
+	// No file found — return defaults.
+	return defaultConfig(), nil
 }
 
-// Init writes the default config template to .github/review-loop.yml at the
-// current repository root, creating .github if needed. It returns the path
-// written. It returns ErrConfigExists if a config file already exists, so a
-// committed policy is never overwritten.
+// Init writes the default config template to .mergeable-please.yml at the
+// current repository root. It returns the path written.
+// It returns ErrConfigExists if a config file already exists.
 func Init() (string, error) {
 	start, err := os.Getwd()
 	if err != nil {
@@ -173,30 +212,25 @@ func initAt(start string) (string, error) {
 		return "", err
 	}
 
-	dir := filepath.Join(root, configDir)
 	for _, name := range configNames() {
-		existing := filepath.Join(dir, name)
+		existing := filepath.Join(root, name)
 		if _, statErr := os.Stat(existing); statErr == nil {
 			return "", fmt.Errorf("%w: %s", ErrConfigExists, existing)
 		}
 	}
 
-	if err = os.MkdirAll(dir, 0o750); err != nil {
-		return "", fmt.Errorf("config: cannot create %s: %w", dir, err)
-	}
-
-	path := filepath.Join(dir, defaultConfigName)
-	if err = os.WriteFile(path, defaultConfig, 0o600); err != nil {
+	path := filepath.Join(root, defaultConfigName)
+	if err = os.WriteFile(path, defaultConfigTemplate, 0o600); err != nil {
 		return "", fmt.Errorf("config: cannot write %s: %w", path, err)
 	}
 
 	return path, nil
 }
 
-// Policies maps the parsed reviewer entries to reviewloop policies.
+// Policies maps the parsed reviewer entries to reviewer policies.
 func Policies(cfg *Config) ([]reviewer.Policy, error) {
-	policies := make([]reviewer.Policy, 0, len(cfg.Reviewers))
-	for _, r := range cfg.Reviewers {
+	policies := make([]reviewer.Policy, 0, len(cfg.GitHub.Reviewers))
+	for _, r := range cfg.GitHub.Reviewers {
 		goal, err := mapGoal(r.Goal)
 		if err != nil {
 			return nil, err
@@ -215,7 +249,7 @@ func Policies(cfg *Config) ([]reviewer.Policy, error) {
 }
 
 // repoRootFrom walks up from start to the first directory that contains a .git
-// entry (a directory for normal clones, a file for worktrees) and returns it.
+// entry and returns it.
 func repoRootFrom(start string) (string, error) {
 	dir := start
 	for {
@@ -238,6 +272,7 @@ func mapGoal(g GoalConfig) (reviewer.Goal, error) {
 	case g.AllConversationsResolved:
 		return reviewer.GoalAllConversationsResolved, nil
 	default:
+		// Defensive dead code: zog validation rejects configs with no goal set.
 		return "", errors.New("config: goal has no valid flag set")
 	}
 }
