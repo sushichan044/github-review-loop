@@ -45,6 +45,24 @@ func Get() string {
 	return formatWithVCS(v, info.Settings)
 }
 
+// Semver returns just the semantic version (for example "v1.2.3"), with no VCS
+// suffix, suitable for tools that require strict semver (such as skillsmith).
+// It falls back to "v0.0.0-dev" for local or untagged builds.
+func Semver() string {
+	v := version
+	if v == "" {
+		if info, ok := debug.ReadBuildInfo(); ok {
+			v = info.Main.Version
+		}
+	}
+
+	if v == "" || v == "(devel)" || v == "dev" {
+		return "v0.0.0-dev"
+	}
+
+	return v
+}
+
 func formatWithVCS(v string, settings []debug.BuildSetting) string {
 	var revision string
 	var modified bool

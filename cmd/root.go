@@ -60,6 +60,9 @@ No configuration file is required: the default settings check for conflicts,
 required CI failures, and ruleset blockers. Reviewer loops are opt-in via
 .mergeable-please.yml at the repository root.`,
 		SilenceUsage: true,
+		// main() owns error printing and exit-code mapping; don't let cobra
+		// also print the error (which would duplicate the message).
+		SilenceErrors: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			resolveFormat := makeFormatResolver(&formatFlag)
 			return runCheck(cmd.Context(), d, resolveFormat, args)
