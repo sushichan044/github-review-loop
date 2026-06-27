@@ -73,7 +73,7 @@ func runCheck(ctx context.Context, d deps, args []string) error {
 
 	result.Finalize()
 
-	if renderErr := output.RenderCheckResult(d.out, result, loopView); renderErr != nil {
+	if renderErr := output.RenderCheckResult(d.out, result, loopView, pr.Target()); renderErr != nil {
 		return renderErr
 	}
 

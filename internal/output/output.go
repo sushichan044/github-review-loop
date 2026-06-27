@@ -71,15 +71,30 @@ type LoopView struct {
 	Done      bool
 }
 
+// writeTarget writes a "target: <s>" line identifying what was inspected (for
+// the GitHub backend, "owner/repo#n <url>"). It writes nothing when s is empty,
+// so the renderers stay backend-agnostic: the caller builds the string.
+func writeTarget(w io.Writer, target string) error {
+	if target == "" {
+		return nil
+	}
+	_, err := fmt.Fprintf(w, "target: %s\n", target)
+	return err
+}
+
 // RenderCheckResult writes a [core.CheckResult] as Markdown. It always emits a
 // machine-readable "status: satisfied|blocked" line (the loop stop signal), then
-// the Blockers, Advisories, and reviewer-loop sections when present.
-func RenderCheckResult(w io.Writer, r core.CheckResult, loopView *LoopView) error {
+// the target line, the Blockers, Advisories, and reviewer-loop sections when
+// present.
+func RenderCheckResult(w io.Writer, r core.CheckResult, loopView *LoopView, target string) error {
 	status := "satisfied"
 	if !r.Satisfied {
 		status = "blocked"
 	}
 	if _, err := fmt.Fprintf(w, "status: %s\n", status); err != nil {
+		return err
+	}
+	if err := writeTarget(w, target); err != nil {
 		return err
 	}
 
@@ -101,7 +116,10 @@ func RenderCheckResult(w io.Writer, r core.CheckResult, loopView *LoopView) erro
 // (e.g. view --condition checks). It emits NO global "status:" verdict — only the
 // matching conditions — because a partial view that omits the reviewer loop must
 // not imply an authoritative pass/fail.
-func RenderDimensionView(w io.Writer, blockers, advisories []core.Condition) error {
+func RenderDimensionView(w io.Writer, blockers, advisories []core.Condition, target string) error {
+	if err := writeTarget(w, target); err != nil {
+		return err
+	}
 	if len(blockers) == 0 && len(advisories) == 0 {
 		_, err := fmt.Fprintln(w, "No conditions found for this dimension.")
 		return err
@@ -113,8 +131,11 @@ func RenderDimensionView(w io.Writer, blockers, advisories []core.Condition) err
 }
 
 // Render writes the full reviewer-loop view as Markdown (view --condition reviewers),
-// including comment bodies.
-func Render(w io.Writer, v LoopView) error {
+// including comment bodies. target identifies the inspected PR (may be empty).
+func Render(w io.Writer, v LoopView, target string) error {
+	if err := writeTarget(w, target); err != nil {
+		return err
+	}
 	return writeReviewerLoop(w, v)
 }
 

@@ -21,6 +21,17 @@ type PR struct {
 	Number int
 }
 
+// URL returns the canonical GitHub web URL for the pull request.
+func (pr PR) URL() string {
+	return fmt.Sprintf("https://github.com/%s/%s/pull/%d", pr.Owner, pr.Repo, pr.Number)
+}
+
+// Target returns a human/agent-readable identifier for the PR, combining the
+// "owner/repo#n" slug with the web URL. Used as the output "target:" line.
+func (pr PR) Target() string {
+	return fmt.Sprintf("%s/%s#%d %s", pr.Owner, pr.Repo, pr.Number, pr.URL())
+}
+
 // PRResolver resolves PR and repository coordinates from the current context.
 // The real implementation uses gh CLI; tests may substitute a fake.
 type PRResolver interface {

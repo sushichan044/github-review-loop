@@ -70,7 +70,7 @@ func runView(ctx context.Context, d deps, condition string, args []string) error
 			return fmt.Errorf("could not evaluate PR: %w", evalErr)
 		}
 		blockers := filterConditionsByKind(result.Blockers, core.ConditionCheckFailing, core.ConditionCheckPending)
-		return output.RenderDimensionView(d.out, blockers, nil)
+		return output.RenderDimensionView(d.out, blockers, nil, pr.Target())
 	case "conflicts":
 		// Show only conflict-related conditions; omit global status.
 		result, evalErr := d.bundledEvaluate(ctx, pr)
@@ -78,20 +78,23 @@ func runView(ctx context.Context, d deps, condition string, args []string) error
 			return fmt.Errorf("could not evaluate PR: %w", evalErr)
 		}
 		blockers := filterConditionsByKind(result.Blockers, core.ConditionConflict, core.ConditionBehindBase)
-		return output.RenderDimensionView(d.out, blockers, nil)
+		return output.RenderDimensionView(d.out, blockers, nil, pr.Target())
 	case "":
 		// Full dimension view: all conditions, but no global status verdict.
 		result, evalErr := d.bundledEvaluate(ctx, pr)
 		if evalErr != nil {
 			return fmt.Errorf("could not evaluate PR: %w", evalErr)
 		}
-		return output.RenderDimensionView(d.out, result.Blockers, result.Advisories)
+		return output.RenderDimensionView(d.out, result.Blockers, result.Advisories, pr.Target())
 	default:
 		return fmt.Errorf("unknown --condition %q: must be conflicts, checks, rules, or reviewers", condition)
 	}
 }
 
 func runViewRules(ctx context.Context, d deps, pr github.PR) error {
+	if _, err := fmt.Fprintf(d.out, "target: %s\n", pr.Target()); err != nil {
+		return err
+	}
 	if d.fetchBranchRules == nil {
 		_, err := fmt.Fprintln(d.out, "Branch rules are not available in this configuration.")
 		return err
@@ -145,7 +148,7 @@ func runViewReviewers(ctx context.Context, d deps, pr github.PR) error {
 	loopState := reviewer.EvaluateLoop(policies, snapshot)
 	view := buildLoopView(loopState, policies, allCommentsByKey, pr)
 
-	return output.Render(d.out, view)
+	return output.Render(d.out, view, pr.Target())
 }
 
 // reviewBodyDrillIn returns a gh command that prints a single review's body

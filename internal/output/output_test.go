@@ -16,14 +16,14 @@ import (
 func renderString(t *testing.T, v output.LoopView) string {
 	t.Helper()
 	var sb strings.Builder
-	require.NoError(t, output.Render(&sb, v))
+	require.NoError(t, output.Render(&sb, v, ""))
 	return sb.String()
 }
 
 func renderCheckString(t *testing.T, r core.CheckResult, loopView *output.LoopView) string {
 	t.Helper()
 	var sb strings.Builder
-	require.NoError(t, output.RenderCheckResult(&sb, r, loopView))
+	require.NoError(t, output.RenderCheckResult(&sb, r, loopView, ""))
 	return sb.String()
 }
 
@@ -338,17 +338,38 @@ func TestRenderDimensionView_NoStatusLine(t *testing.T) {
 
 	var sb strings.Builder
 	blockers := []core.Condition{{Kind: core.ConditionCheckFailing, Title: "Required CI check failing"}}
-	require.NoError(t, output.RenderDimensionView(&sb, blockers, nil))
+	require.NoError(t, output.RenderDimensionView(&sb, blockers, nil, ""))
 	out := sb.String()
 
 	assert.NotContains(t, out, "status:", "dimension view must not emit a global status verdict")
 	assert.Contains(t, out, "check-failing")
 }
 
+func TestRenderCheckResult_TargetLine(t *testing.T) {
+	t.Parallel()
+
+	const target = "o/r#3 https://github.com/o/r/pull/3"
+	var sb strings.Builder
+	require.NoError(t, output.RenderCheckResult(&sb, core.CheckResult{Satisfied: true}, nil, target))
+	out := sb.String()
+
+	assert.Contains(t, out, "status: satisfied", "status line is preserved")
+	assert.Contains(t, out, "target: "+target, "target line identifies the inspected PR")
+}
+
+func TestRenderDimensionView_TargetLine(t *testing.T) {
+	t.Parallel()
+
+	const target = "o/r#3 https://github.com/o/r/pull/3"
+	var sb strings.Builder
+	require.NoError(t, output.RenderDimensionView(&sb, nil, nil, target))
+	assert.Contains(t, sb.String(), "target: "+target)
+}
+
 func TestRenderDimensionView_Empty(t *testing.T) {
 	t.Parallel()
 
 	var sb strings.Builder
-	require.NoError(t, output.RenderDimensionView(&sb, nil, nil))
+	require.NoError(t, output.RenderDimensionView(&sb, nil, nil, ""))
 	assert.Contains(t, sb.String(), "No conditions found")
 }
