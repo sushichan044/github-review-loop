@@ -76,6 +76,10 @@ func runRequest(
 	loopState := reviewer.EvaluateLoop(policies, snapshot)
 	targets := selectTargets(loopState.Reviewers, policies, reviewerFlag)
 
+	if reviewerFlag != "" && len(targets) == 0 {
+		return fmt.Errorf("unknown reviewer %q", reviewerFlag)
+	}
+
 	return fireRequests(d, pr, targets)
 }
 

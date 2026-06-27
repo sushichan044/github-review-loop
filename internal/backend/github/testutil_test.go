@@ -112,61 +112,10 @@ func injectTimeline(
 	totalCount := len(reviews) + len(reqEvents) + len(comments)
 	query.Repository.PullRequest.TimelineItems.TotalCount = int32(totalCount)
 
-	// nodeType must stay structurally identical to the anonymous node in prTimelineQueryStruct.
-	// Mirror any field additions/removals in timeline.go here.
-	type nodeType = struct {
-		Typename string `graphql:"__typename"`
-
-		ReviewRequestedEvent struct {
-			RequestedReviewer struct {
-				User struct {
-					Login string
-				} `graphql:"... on User"`
-				Team struct {
-					Slug string
-				} `graphql:"... on Team"`
-				Bot struct {
-					Login string
-				} `graphql:"... on Bot"`
-				Mannequin struct {
-					Login string
-				} `graphql:"... on Mannequin"`
-			}
-			CreatedAt graphqlTime
-		} `graphql:"... on ReviewRequestedEvent"`
-
-		PullRequestReview struct {
-			Author struct {
-				Login string
-			}
-			State       string
-			SubmittedAt graphqlTime
-			Commit      struct {
-				Oid string
-			}
-		} `graphql:"... on PullRequestReview"`
-
-		PullRequestCommit struct {
-			Commit struct {
-				Oid           string
-				CommittedDate graphqlTime
-			}
-		} `graphql:"... on PullRequestCommit"`
-
-		HeadRefForcePushedEvent struct {
-			AfterCommit struct {
-				Oid string
-			}
-		} `graphql:"... on HeadRefForcePushedEvent"`
-
-		IssueComment struct {
-			Author struct {
-				Login string
-			}
-			Body      string
-			CreatedAt graphqlTime
-		} `graphql:"... on IssueComment"`
-	}
+	// nodeType aliases the shared named type so the injection code below
+	// compiles unchanged. Now that the node shape is a named type in timeline.go,
+	// there is no need to mirror its fields here.
+	type nodeType = prTimelineNode
 
 	var nodes []nodeType
 

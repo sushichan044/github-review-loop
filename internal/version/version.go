@@ -5,6 +5,9 @@ package version
 import (
 	"fmt"
 	"runtime/debug"
+	"strings"
+
+	"golang.org/x/mod/semver"
 )
 
 const (
@@ -47,7 +50,8 @@ func Get() string {
 
 // Semver returns just the semantic version (for example "v1.2.3"), with no VCS
 // suffix, suitable for tools that require strict semver (such as skillsmith).
-// It falls back to "v0.0.0-dev" for local or untagged builds.
+// It normalizes the value by prepending "v" when missing and validates it; any
+// invalid value falls back to "v0.0.0-dev".
 func Semver() string {
 	v := version
 	if v == "" {
@@ -56,7 +60,23 @@ func Semver() string {
 		}
 	}
 
+	return normalizeSemver(v)
+}
+
+// normalizeSemver canonicalizes a raw version string to strict semver.
+// It prepends "v" when missing, validates with [semver.IsValid], and returns
+// "v0.0.0-dev" for empty, pseudo-version ("(devel)"), or malformed values.
+func normalizeSemver(v string) string {
 	if v == "" || v == "(devel)" || v == "dev" {
+		return "v0.0.0-dev"
+	}
+
+	// Prepend "v" if the caller omitted it (e.g. ldflags passes "1.2.3").
+	if !strings.HasPrefix(v, "v") {
+		v = "v" + v
+	}
+
+	if !semver.IsValid(v) {
 		return "v0.0.0-dev"
 	}
 

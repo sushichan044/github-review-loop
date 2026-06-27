@@ -109,11 +109,15 @@ func IdentityKey(id reviewer.Identity) string {
 
 // fetchReviewThreads retrieves all review threads for the given PR using
 // cursor-based pagination.
-func fetchReviewThreads(_ context.Context, gql GraphQLQuerier, pr PR) ([]reviewThread, error) {
+func fetchReviewThreads(ctx context.Context, gql GraphQLQuerier, pr PR) ([]reviewThread, error) {
 	var threads []reviewThread
 	var cursor *graphql.String
 
 	for {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+
 		var q reviewThreadsQueryStruct
 		vars := map[string]any{
 			gqlVarOwner:  graphql.String(pr.Owner),

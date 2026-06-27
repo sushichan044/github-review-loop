@@ -151,7 +151,11 @@ func Parse(data []byte) (*Config, error) {
 		return defaultConfig(), nil
 	}
 
-	var cfg Config
+	// Seed cfg with defaults so that omitting a top-level section (e.g. "git:")
+	// while providing another (e.g. "github:") still applies nested defaults for
+	// the missing section. Without this, zog would leave nested fields at their
+	// zero values instead of applying schema defaults.
+	cfg := *defaultConfig()
 	if errs := buildSchema().Parse(raw, &cfg); errs != nil {
 		return nil, fmt.Errorf("config: validation error: %v", errs)
 	}

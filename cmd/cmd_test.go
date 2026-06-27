@@ -33,6 +33,10 @@ func (f *fakePRResolver) CurrentPR(_ context.Context) (string, string, int, erro
 	return f.owner, f.repo, f.number, f.err
 }
 
+func (f *fakePRResolver) CurrentRepo(_ context.Context) (string, string, error) {
+	return f.owner, f.repo, f.err
+}
+
 type captureExec struct {
 	calls [][]string
 	err   error
@@ -254,15 +258,18 @@ func TestCheck_Advisories_AlwaysShown_EvenWhenSatisfied(t *testing.T) {
 func TestCheck_BareNumber_UsesCurrentRepo(t *testing.T) {
 	t.Parallel()
 
-	resolver := &fakePRResolver{owner: "org", repo: "rep", number: 99}
+	// Resolver returns owner/repo for the repo context; number must come from the arg.
+	resolver := &fakePRResolver{owner: "org", repo: "rep"}
 
+	var capturedPR github.PR
 	var buf bytes.Buffer
 
 	err := cmd.RunCheckForTest(
 		context.Background(),
 		cmd.TestDeps{
 			Resolver: resolver,
-			BundledEvaluate: func(_ context.Context, _ github.PR) (core.CheckResult, error) {
+			BundledEvaluate: func(_ context.Context, pr github.PR) (core.CheckResult, error) {
+				capturedPR = pr
 				return core.CheckResult{Satisfied: true}, nil
 			},
 			LoadConfig: func() (*config.Config, error) { return defaultConfig(), nil },
@@ -271,20 +278,26 @@ func TestCheck_BareNumber_UsesCurrentRepo(t *testing.T) {
 		[]string{"42"},
 	)
 	require.NoError(t, err)
+	assert.Equal(t, "org", capturedPR.Owner, "owner must come from CurrentRepo")
+	assert.Equal(t, "rep", capturedPR.Repo, "repo must come from CurrentRepo")
+	assert.Equal(t, 42, capturedPR.Number, "number must come from the argument")
 }
 
 func TestCheck_URL_ParsedDirectly(t *testing.T) {
 	t.Parallel()
 
+	// Resolver must never be called when a full URL is provided.
 	resolver := &fakePRResolver{err: errors.New("should not be called")}
 
+	var capturedPR github.PR
 	var buf bytes.Buffer
 
 	err := cmd.RunCheckForTest(
 		context.Background(),
 		cmd.TestDeps{
 			Resolver: resolver,
-			BundledEvaluate: func(_ context.Context, _ github.PR) (core.CheckResult, error) {
+			BundledEvaluate: func(_ context.Context, pr github.PR) (core.CheckResult, error) {
+				capturedPR = pr
 				return core.CheckResult{Satisfied: true}, nil
 			},
 			LoadConfig: func() (*config.Config, error) { return defaultConfig(), nil },
@@ -293,6 +306,9 @@ func TestCheck_URL_ParsedDirectly(t *testing.T) {
 		[]string{"https://github.com/myorg/myrepo/pull/7"},
 	)
 	require.NoError(t, err)
+	assert.Equal(t, "myorg", capturedPR.Owner, "owner must come from URL")
+	assert.Equal(t, "myrepo", capturedPR.Repo, "repo must come from URL")
+	assert.Equal(t, 7, capturedPR.Number, "number must come from URL")
 }
 
 // ---------------------------------------------------------------------------

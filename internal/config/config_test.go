@@ -95,6 +95,24 @@ func TestParse_DefaultsAppliedWhenSectionsAbsent(t *testing.T) {
 	assert.Empty(t, cfg.GitHub.Reviewers)
 }
 
+func TestParse_GitDefaultsWhenOnlyGithubSectionPresent(t *testing.T) {
+	t.Parallel()
+
+	// "github:" present but "git:" entirely omitted → git section must still get
+	// its nested defaults (remote: "origin", conflicts-resolved: true).
+	yaml := `
+github:
+  reviewers:
+    - type: github-copilot
+      goal: { all-conversations-resolved: true }
+`
+	cfg, err := config.Parse([]byte(yaml))
+	require.NoError(t, err)
+
+	assert.Equal(t, "origin", cfg.Git.Remote, "git.remote must default to 'origin' when git: section is absent")
+	assert.True(t, cfg.Git.ConflictsResolved, "git.conflicts-resolved must default to true when git: section is absent")
+}
+
 func TestParse_GithubApp_WithTrigger(t *testing.T) {
 	t.Parallel()
 

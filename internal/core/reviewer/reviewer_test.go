@@ -195,14 +195,29 @@ func TestEvaluate_ApprovedGoal_OtherReviewerDoesNotCount(t *testing.T) {
 
 // ─── Goal: AllConversationsResolved ──────────────────────────────────────────
 
-func TestEvaluate_AllConversationsGoal_NoThreads(t *testing.T) {
+func TestEvaluate_AllConversationsGoal_NoThreads_NeverEngaged(t *testing.T) {
 	t.Parallel()
 
+	// No reviews and no threads → never engaged → goal NOT vacuously met.
 	s := reviewer.Snapshot{
 		HeadCommitOID: "head1",
-		Triggers:      []reviewer.TriggerAction{{Reviewer: alice(), At: baseTime()}},
 		Reviews:       []reviewer.Review{},
 		Threads:       []reviewer.Thread{},
+	}
+	result := reviewer.Evaluate(alicePolicy(reviewer.GoalAllConversationsResolved, 5), s)
+	assert.False(t, result.GoalMet)
+}
+
+func TestEvaluate_AllConversationsGoal_NoThreads_EngagedByReview(t *testing.T) {
+	t.Parallel()
+
+	// Has a non-pending review (engaged) but no threads → all resolved → goal met.
+	s := reviewer.Snapshot{
+		HeadCommitOID: "head1",
+		Reviews: []reviewer.Review{
+			{Reviewer: alice(), State: reviewer.ReviewStateCommented, CommitOID: "head1", At: baseTime()},
+		},
+		Threads: []reviewer.Thread{},
 	}
 	result := reviewer.Evaluate(alicePolicy(reviewer.GoalAllConversationsResolved, 5), s)
 	assert.True(t, result.GoalMet)
@@ -382,13 +397,13 @@ func TestEvaluate_Guard_AllowedWhenHeadAdvanced(t *testing.T) {
 	assert.Empty(t, result.BlockReason)
 }
 
-func TestEvaluate_Guard_AllowedWhenNoPriorReview(t *testing.T) {
+func TestEvaluate_Guard_AllowedWhenNeverRequested(t *testing.T) {
 	t.Parallel()
 
-	// Active and no reviews at all — initial request is allowed
+	// Active, no reviews, and no prior trigger → truly initial request, allowed.
 	s := reviewer.Snapshot{
 		HeadCommitOID: "head1",
-		Triggers:      []reviewer.TriggerAction{{Reviewer: alice(), At: baseTime()}},
+		Triggers:      []reviewer.TriggerAction{},
 		Reviews:       []reviewer.Review{},
 		Threads:       []reviewer.Thread{},
 	}
@@ -401,8 +416,8 @@ func TestEvaluate_Guard_AllowedWhenNoPriorReview(t *testing.T) {
 func TestEvaluate_Guard_PendingIgnoredForCommitCheck(t *testing.T) {
 	t.Parallel()
 
-	// Only review is Pending at head — should use latest non-pending for OID check;
-	// no non-pending review exists, so guard allows (same as no prior review)
+	// Trigger exists + only a pending review → outstanding request (no non-pending
+	// response) → blocked, not allowed.
 	s := reviewer.Snapshot{
 		HeadCommitOID: "head1",
 		Triggers:      []reviewer.TriggerAction{{Reviewer: alice(), At: baseTime()}},
@@ -412,7 +427,107 @@ func TestEvaluate_Guard_PendingIgnoredForCommitCheck(t *testing.T) {
 		Threads: []reviewer.Thread{},
 	}
 	result := reviewer.Evaluate(alicePolicy(reviewer.GoalApproved, 5), s)
-	assert.True(t, result.CanRerequest)
+	assert.False(t, result.CanRerequest)
+	assert.NotEmpty(t, result.BlockReason)
+}
+
+// ─── Stale approval ──────────────────────────────────────────────────────────
+
+func TestEvaluate_ApprovedGoal_StaleApprovalIsNotTerminal(t *testing.T) {
+	t.Parallel()
+
+	// Approved at an older commit while head has advanced → stale → goal NOT met,
+	// reviewer stays active and can be re-requested once new commits land.
+	s := reviewer.Snapshot{
+		HeadCommitOID: "head2",
+		Reviews: []reviewer.Review{
+			{Reviewer: alice(), State: reviewer.ReviewStateApproved, CommitOID: "head1", At: baseTime()},
+		},
+		Threads: []reviewer.Thread{},
+	}
+	result := reviewer.Evaluate(alicePolicy(reviewer.GoalApproved, 5), s)
+	assert.False(t, result.GoalMet, "approval on old commit must not satisfy goal")
+	assert.Equal(t, reviewer.PhaseActive, result.Phase, "reviewer must return to active after new commits")
+}
+
+// ─── Outstanding-request guard (4-case matrix) ───────────────────────────────
+
+func TestEvaluate_Guard_OutstandingRequestMatrix(t *testing.T) {
+	t.Parallel()
+
+	type tc struct {
+		name             string
+		triggers         []reviewer.TriggerAction
+		reviews          []reviewer.Review
+		wantCanRerequest bool
+		wantBlockReason  string // non-empty substring expected in BlockReason when blocked
+	}
+
+	t0 := baseTime()
+	t1 := t0.Add(time.Hour)
+
+	tests := []tc{
+		{
+			name:             "never-engaged never-requested: initial request allowed",
+			triggers:         []reviewer.TriggerAction{},
+			reviews:          []reviewer.Review{},
+			wantCanRerequest: true,
+		},
+		{
+			name:             "never-engaged already-requested: awaiting response",
+			triggers:         []reviewer.TriggerAction{{Reviewer: alice(), At: t0}},
+			reviews:          []reviewer.Review{},
+			wantCanRerequest: false,
+			wantBlockReason:  "already requested",
+		},
+		{
+			name: "engaged head-not-advanced: same commit blocks re-request",
+			triggers: []reviewer.TriggerAction{
+				{Reviewer: alice(), At: t0},
+			},
+			reviews: []reviewer.Review{
+				{Reviewer: alice(), State: reviewer.ReviewStateChangesRequested, CommitOID: "head1", At: t1},
+			},
+			wantCanRerequest: false,
+			wantBlockReason:  "no new commit",
+		},
+		{
+			name: "engaged head-advanced no-outstanding: re-request allowed",
+			triggers: []reviewer.TriggerAction{
+				{Reviewer: alice(), At: t0},
+			},
+			reviews: []reviewer.Review{
+				{Reviewer: alice(), State: reviewer.ReviewStateChangesRequested, CommitOID: "head1", At: t1},
+			},
+			// Override HeadCommitOID to head2 in snapshot below.
+			wantCanRerequest: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			headOID := "head1"
+			if tt.wantCanRerequest && len(tt.reviews) > 0 {
+				// advance head so commit guard does not fire
+				headOID = "head2"
+			}
+
+			s := reviewer.Snapshot{
+				HeadCommitOID: headOID,
+				Triggers:      tt.triggers,
+				Reviews:       tt.reviews,
+				Threads:       []reviewer.Thread{},
+			}
+			result := reviewer.Evaluate(alicePolicy(reviewer.GoalApproved, 5), s)
+
+			assert.Equal(t, tt.wantCanRerequest, result.CanRerequest, "CanRerequest")
+			if tt.wantBlockReason != "" {
+				assert.Contains(t, result.BlockReason, tt.wantBlockReason, "BlockReason")
+			}
+		})
+	}
 }
 
 // ─── github-copilot identity ──────────────────────────────────────────────────

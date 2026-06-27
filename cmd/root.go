@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"sync"
 
 	"github.com/spf13/cobra"
 
@@ -72,34 +73,74 @@ required CI failures, and ruleset blockers. Reviewer loops are opt-in via
 
 // Execute builds the production dependency set, constructs the root command,
 // and runs it. Errors are returned to main for exit-code handling.
+//
+// Config loading and GitHub client creation are deferred until first use so
+// that `--help`, `help`, and `init` work even without GitHub auth or a valid
+// config file.
 func Execute(w io.Writer) error {
-	cfg, err := config.Load()
-	if err != nil {
-		return fmt.Errorf("could not load config: %w", err)
+	// Memoized config loader — loads once on first call, caches result.
+	var (
+		cfgOnce   sync.Once
+		cachedCfg *config.Config
+		cfgErr    error
+	)
+	loadConfig := func() (*config.Config, error) {
+		cfgOnce.Do(func() {
+			cachedCfg, cfgErr = config.Load()
+			if cfgErr != nil {
+				cfgErr = fmt.Errorf("could not load config: %w", cfgErr)
+			}
+		})
+		return cachedCfg, cfgErr
 	}
 
-	client, err := github.NewClient()
-	if err != nil {
-		return err
+	// Memoized GitHub client provider — connects once on first call.
+	var (
+		clientOnce   sync.Once
+		cachedClient *github.Client
+		clientErr    error
+	)
+	getClient := func() (*github.Client, error) {
+		clientOnce.Do(func() {
+			cachedClient, clientErr = github.NewClient()
+		})
+		return cachedClient, clientErr
 	}
-	be := github.NewGitHubBackendWithClient(client)
 
 	d := deps{
 		resolver: github.GHPRResolver{},
 		bundledEvaluate: func(ctx context.Context, pr github.PR) (core.CheckResult, error) {
+			client, err := getClient()
+			if err != nil {
+				return core.CheckResult{}, err
+			}
+			be := github.NewGitHubBackendWithClient(client)
 			return be.BundledEvaluate(ctx, backend.PRCoords{Owner: pr.Owner, Repo: pr.Repo, Number: pr.Number})
 		},
 		fetchSnapshot: func(ctx context.Context, pr github.PR, policies []reviewer.Policy) (reviewer.Snapshot, error) {
+			client, err := getClient()
+			if err != nil {
+				return reviewer.Snapshot{}, err
+			}
 			return github.FetchSnapshot(ctx, client, pr, policies)
 		},
 		threadComments: func(ctx context.Context, pr github.PR, policies []reviewer.Policy) (map[string][]github.ThreadComment, error) {
+			client, err := getClient()
+			if err != nil {
+				return nil, err
+			}
 			return github.ThreadComments(ctx, client, pr, policies)
 		},
 		fetchBranchRules: func(ctx context.Context, pr github.PR) ([]backend.BranchRule, error) {
+			client, err := getClient()
+			if err != nil {
+				return nil, err
+			}
+			be := github.NewGitHubBackendWithClient(client)
 			return be.FetchBranchRules(ctx, backend.PRCoords{Owner: pr.Owner, Repo: pr.Repo, Number: pr.Number})
 		},
 		triggerer:  github.NewTriggerer(),
-		loadConfig: func() (*config.Config, error) { return cfg, nil },
+		loadConfig: loadConfig,
 		initConfig: config.Init,
 		out:        w,
 	}
@@ -111,8 +152,9 @@ func Execute(w io.Writer) error {
 //
 // Resolution order:
 //  1. If arg is non-empty: parse as number or GitHub URL via [github.ParsePRArg].
-//     For bare numbers, owner/repo come from [github.PRResolver.CurrentPR].
-//  2. If arg is empty: delegate to [github.PRResolver.CurrentPR].
+//     For bare numbers, owner/repo come from [github.PRResolver.CurrentRepo]
+//     (repository context only — no current-branch PR required).
+//  2. If arg is empty: delegate to [github.PRResolver.CurrentPR] (current branch).
 func resolvePR(ctx context.Context, arg string, resolver github.PRResolver) (github.PR, error) {
 	if arg != "" {
 		owner, repo, number, err := github.ParsePRArg(arg)
@@ -121,7 +163,9 @@ func resolvePR(ctx context.Context, arg string, resolver github.PRResolver) (git
 		}
 
 		if owner == "" || repo == "" {
-			o, r, _, resolveErr := resolver.CurrentPR(ctx)
+			// Bare number: get owner/repo from the repo context, not from the
+			// current-branch PR (which may not exist or may be a different PR).
+			o, r, resolveErr := resolver.CurrentRepo(ctx)
 			if resolveErr != nil {
 				return github.PR{}, resolveErr
 			}

@@ -21,14 +21,28 @@ type PR struct {
 	Number int
 }
 
-// PRResolver resolves the PR from the current branch context.
+// PRResolver resolves PR and repository coordinates from the current context.
 // The real implementation uses gh CLI; tests may substitute a fake.
 type PRResolver interface {
+	// CurrentPR returns the open PR number for the current git branch.
 	CurrentPR(ctx context.Context) (owner, repo string, number int, err error)
+	// CurrentRepo returns the owner/repo of the current repository without
+	// requiring an open PR on the current branch.
+	CurrentRepo(ctx context.Context) (owner, repo string, err error)
 }
 
 // GHPRResolver is the real [PRResolver] that uses the gh CLI.
 type GHPRResolver struct{}
+
+// CurrentRepo returns the owner and repository name for the current git remote
+// via go-gh's repository detection.
+func (GHPRResolver) CurrentRepo(_ context.Context) (string, string, error) {
+	repo, err := repository.Current()
+	if err != nil {
+		return "", "", fmt.Errorf("failed to determine repository: %w", err)
+	}
+	return repo.Owner, repo.Name, nil
+}
 
 // CurrentPR detects the PR for the current git branch via gh CLI.
 func (GHPRResolver) CurrentPR(_ context.Context) (string, string, int, error) {
