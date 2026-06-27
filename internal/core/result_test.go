@@ -9,7 +9,7 @@ import (
 	"github.com/sushichan044/mergeable-please/internal/core/reviewer"
 )
 
-func TestCheckResult_Finalize_NoBockers_NoLoop_IsSatisfied(t *testing.T) {
+func TestCheckResult_Finalize_NoBlockers_NoLoop_IsSatisfied(t *testing.T) {
 	t.Parallel()
 
 	r := core.CheckResult{}

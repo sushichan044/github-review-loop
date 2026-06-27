@@ -38,11 +38,13 @@ type checkContextNode struct {
 		Name       string `graphql:"name"`
 		Status     string `graphql:"status"`
 		Conclusion string `graphql:"conclusion"`
+		DetailsURL string `graphql:"detailsUrl"`
 		IsRequired bool   `graphql:"isRequired(pullRequestNumber: $number)"`
 	} `graphql:"... on CheckRun"`
 	StatusContext struct {
 		Context    string `graphql:"context"`
 		State      string `graphql:"state"`
+		TargetURL  string `graphql:"targetUrl"`
 		IsRequired bool   `graphql:"isRequired(pullRequestNumber: $number)"`
 	} `graphql:"... on StatusContext"`
 }
@@ -59,7 +61,10 @@ type prMergeabilityQueryStruct struct {
 			BaseRefName       string `graphql:"baseRefName"`
 			StatusCheckRollup struct {
 				Contexts struct {
-					Nodes []checkContextNode
+					Nodes    []checkContextNode
+					PageInfo struct {
+						HasNextPage bool
+					}
 				} `graphql:"contexts(first: 100)"`
 			} `graphql:"statusCheckRollup"`
 		} `graphql:"pullRequest(number: $number)"`
@@ -141,7 +146,7 @@ func (b *GitHubBackend) BundledEvaluate(_ context.Context, pr backend.PRCoords) 
 	result.HeadCommitOID = q.Repository.PullRequest.HeadRefOid
 	result.MergeStateRaw = q.Repository.PullRequest.MergeStateStatus
 
-	attributeResult(&result, q)
+	attributeResult(&result, q, pr.Number)
 	return result, nil
 }
 
@@ -155,7 +160,7 @@ func (b *GitHubBackend) FetchBranchRules(ctx context.Context, pr backend.PRCoord
 
 // attributeResult applies the plan's attribution ladder to populate result
 // Blockers and Advisories based on the query response.
-func attributeResult(result *core.CheckResult, q prMergeabilityQueryStruct) {
+func attributeResult(result *core.CheckResult, q prMergeabilityQueryStruct, prNumber int) {
 	mergeable := q.Repository.PullRequest.Mergeable
 	mergeState := q.Repository.PullRequest.MergeStateStatus
 	reviewDecision := q.Repository.PullRequest.ReviewDecision
@@ -187,7 +192,8 @@ func attributeResult(result *core.CheckResult, q prMergeabilityQueryStruct) {
 		})
 
 	case mergeState == "BLOCKED":
-		attributeBlocked(result, q.Repository.PullRequest.StatusCheckRollup.Contexts.Nodes, reviewDecision)
+		contexts := q.Repository.PullRequest.StatusCheckRollup.Contexts
+		attributeBlocked(result, contexts.Nodes, contexts.PageInfo.HasNextPage, reviewDecision, prNumber)
 
 	default:
 		// CLEAN / UNSTABLE / HAS_HOOKS — no blockers from merge state.
@@ -198,8 +204,16 @@ func attributeResult(result *core.CheckResult, q prMergeabilityQueryStruct) {
 
 // attributeBlocked decomposes a BLOCKED mergeStateStatus into specific conditions
 // using the available fields from the same query response.
-func attributeBlocked(result *core.CheckResult, nodes []checkContextNode, reviewDecision string) {
+func attributeBlocked(
+	result *core.CheckResult,
+	nodes []checkContextNode,
+	truncated bool,
+	reviewDecision string,
+	prNumber int,
+) {
 	attributed := false
+
+	checksCmd := fmt.Sprintf("gh pr checks %d", prNumber)
 
 	failing, pending := collectRequiredCheckNames(nodes)
 	if len(failing) > 0 {
@@ -209,7 +223,7 @@ func attributeBlocked(result *core.CheckResult, nodes []checkContextNode, review
 			Title:           "Required CI check(s) failing",
 			Detail:          strings.Join(failing, ", "),
 			SuggestedAction: "Fix the reported failures and push a new commit.",
-			DrillInCmd:      "mergeable-please view --condition checks",
+			DrillInCmd:      checksCmd,
 		})
 		attributed = true
 	}
@@ -220,9 +234,19 @@ func attributeBlocked(result *core.CheckResult, nodes []checkContextNode, review
 			Title:           "Required CI check(s) still running",
 			Detail:          strings.Join(pending, ", "),
 			SuggestedAction: "Wait for checks to complete, then re-run `mergeable-please check`.",
-			DrillInCmd:      "mergeable-please view --condition checks",
+			DrillInCmd:      checksCmd,
 		})
 		attributed = true
+	}
+
+	if truncated {
+		result.Advisories = append(result.Advisories, core.Condition{
+			Kind:       core.ConditionCheckTruncated,
+			Severity:   core.SeverityAdvisory,
+			Title:      "Status check list was truncated at 100 entries",
+			Detail:     "GitHub returned more than 100 checks; only the first 100 were evaluated.",
+			DrillInCmd: checksCmd,
+		})
 	}
 
 	if addReviewDecisionAdvisory(result, reviewDecision) {

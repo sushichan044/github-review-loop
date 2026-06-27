@@ -105,7 +105,6 @@ func TestCheck_Satisfied_ExitsZero(t *testing.T) {
 			LoadConfig: func() (*config.Config, error) { return defaultConfig(), nil },
 			Out:        &buf,
 		},
-		"human",
 		nil,
 	)
 	require.NoError(t, err)
@@ -134,7 +133,6 @@ func TestCheck_Blocked_ReturnsErrBlocked(t *testing.T) {
 			LoadConfig: func() (*config.Config, error) { return defaultConfig(), nil },
 			Out:        &buf,
 		},
-		"human",
 		nil,
 	)
 	require.ErrorIs(t, err, cmd.ErrBlocked)
@@ -169,7 +167,6 @@ func TestCheck_WithReviewerLoop_NotDone_ReturnsErrBlocked(t *testing.T) {
 			LoadConfig: func() (*config.Config, error) { return minimalConfig(), nil },
 			Out:        &buf,
 		},
-		"human",
 		nil,
 	)
 	require.Error(t, err)
@@ -210,7 +207,6 @@ func TestCheck_WithReviewerLoop_Done_ExitsZero(t *testing.T) {
 			LoadConfig: func() (*config.Config, error) { return minimalConfig(), nil },
 			Out:        &buf,
 		},
-		"human",
 		nil,
 	)
 	require.NoError(t, err)
@@ -243,7 +239,6 @@ func TestCheck_Advisories_AlwaysShown_EvenWhenSatisfied(t *testing.T) {
 			LoadConfig: func() (*config.Config, error) { return defaultConfig(), nil },
 			Out:        &buf,
 		},
-		"human",
 		nil,
 	)
 	require.NoError(t, err, "advisories alone should not block")
@@ -273,7 +268,6 @@ func TestCheck_BareNumber_UsesCurrentRepo(t *testing.T) {
 			LoadConfig: func() (*config.Config, error) { return defaultConfig(), nil },
 			Out:        &buf,
 		},
-		"human",
 		[]string{"42"},
 	)
 	require.NoError(t, err)
@@ -296,7 +290,6 @@ func TestCheck_URL_ParsedDirectly(t *testing.T) {
 			LoadConfig: func() (*config.Config, error) { return defaultConfig(), nil },
 			Out:        &buf,
 		},
-		"human",
 		[]string{"https://github.com/myorg/myrepo/pull/7"},
 	)
 	require.NoError(t, err)
@@ -461,34 +454,6 @@ func TestRequest_NoReviewers_ReturnsError(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// format flag tests
-// ---------------------------------------------------------------------------
-
-func TestCheck_InvalidFormat_ReturnsError(t *testing.T) {
-	t.Parallel()
-
-	resolver := &fakePRResolver{owner: "o", repo: "r", number: 1}
-
-	var buf bytes.Buffer
-
-	err := cmd.RunCheckForTest(
-		context.Background(),
-		cmd.TestDeps{
-			Resolver: resolver,
-			BundledEvaluate: func(_ context.Context, _ github.PR) (core.CheckResult, error) {
-				return core.CheckResult{}, nil
-			},
-			LoadConfig: func() (*config.Config, error) { return defaultConfig(), nil },
-			Out:        &buf,
-		},
-		"notaformat",
-		nil,
-	)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "notaformat")
-}
-
-// ---------------------------------------------------------------------------
 // init command tests
 // ---------------------------------------------------------------------------
 
@@ -516,6 +481,74 @@ func TestInit_PropagatesError(t *testing.T) {
 	})
 	require.Error(t, err)
 	assert.ErrorIs(t, err, config.ErrConfigExists)
+}
+
+// ---------------------------------------------------------------------------
+// view command tests
+// ---------------------------------------------------------------------------
+
+func TestView_ChecksDimension_NoStatusLine(t *testing.T) {
+	t.Parallel()
+
+	resolver := &fakePRResolver{owner: "org", repo: "repo", number: 1}
+	blockedResult := core.CheckResult{
+		Blockers: []core.Condition{
+			{Kind: core.ConditionCheckFailing, Severity: core.SeverityBlocker, Title: "CI failing", Detail: "lint"},
+			{Kind: core.ConditionConflict, Severity: core.SeverityBlocker, Title: "Conflicts"},
+		},
+	}
+
+	var buf bytes.Buffer
+	err := cmd.RunViewForTest(
+		context.Background(),
+		cmd.TestDeps{
+			Resolver: resolver,
+			BundledEvaluate: func(_ context.Context, _ github.PR) (core.CheckResult, error) {
+				return blockedResult, nil
+			},
+			LoadConfig: func() (*config.Config, error) { return defaultConfig(), nil },
+			Out:        &buf,
+		},
+		"checks",
+		nil,
+	)
+	require.NoError(t, err)
+	out := buf.String()
+	assert.NotContains(t, out, "status:", "dimension view must never emit a global status line")
+	assert.Contains(t, out, "check-failing", "check condition must appear")
+	assert.NotContains(t, out, "conflict", "conflict condition must be filtered out for checks dimension")
+}
+
+func TestView_ConflictsDimension_NoStatusLine(t *testing.T) {
+	t.Parallel()
+
+	resolver := &fakePRResolver{owner: "org", repo: "repo", number: 1}
+	blockedResult := core.CheckResult{
+		Blockers: []core.Condition{
+			{Kind: core.ConditionCheckFailing, Severity: core.SeverityBlocker, Title: "CI failing"},
+			{Kind: core.ConditionConflict, Severity: core.SeverityBlocker, Title: "Merge conflicts"},
+		},
+	}
+
+	var buf bytes.Buffer
+	err := cmd.RunViewForTest(
+		context.Background(),
+		cmd.TestDeps{
+			Resolver: resolver,
+			BundledEvaluate: func(_ context.Context, _ github.PR) (core.CheckResult, error) {
+				return blockedResult, nil
+			},
+			LoadConfig: func() (*config.Config, error) { return defaultConfig(), nil },
+			Out:        &buf,
+		},
+		"conflicts",
+		nil,
+	)
+	require.NoError(t, err)
+	out := buf.String()
+	assert.NotContains(t, out, "status:", "dimension view must never emit a global status line")
+	assert.Contains(t, out, "conflict", "conflict condition must appear")
+	assert.NotContains(t, out, "check-failing", "check condition must be filtered out for conflicts dimension")
 }
 
 // ---------------------------------------------------------------------------
@@ -556,7 +589,6 @@ func TestCheck_ReviewerLoop_NewComments_OnlyAfterLastRally(t *testing.T) {
 			LoadConfig: func() (*config.Config, error) { return minimalConfig(), nil },
 			Out:        &buf,
 		},
-		"human",
 		nil,
 	)
 	require.Error(t, err)

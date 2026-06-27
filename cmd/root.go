@@ -14,7 +14,6 @@ import (
 	"github.com/sushichan044/mergeable-please/internal/config"
 	"github.com/sushichan044/mergeable-please/internal/core"
 	"github.com/sushichan044/mergeable-please/internal/core/reviewer"
-	"github.com/sushichan044/mergeable-please/internal/output"
 )
 
 // ErrBlocked is returned by the check command when the PR is not yet mergeable.
@@ -41,13 +40,8 @@ type deps struct {
 	out              io.Writer
 }
 
-// formatResolver returns the [output.Format] to use, resolving the --format flag.
-type formatResolver func() (output.Format, error)
-
 // newRootCmd constructs the root cobra command with all subcommands wired.
 func newRootCmd(d deps) *cobra.Command {
-	var formatFlag string
-
 	root := &cobra.Command{
 		Use:   "mergeable-please",
 		Short: "Check and advance pull request merge readiness",
@@ -64,32 +58,16 @@ required CI failures, and ruleset blockers. Reviewer loops are opt-in via
 		// also print the error (which would duplicate the message).
 		SilenceErrors: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			resolveFormat := makeFormatResolver(&formatFlag)
-			return runCheck(cmd.Context(), d, resolveFormat, args)
+			return runCheck(cmd.Context(), d, args)
 		},
 	}
 
-	root.PersistentFlags().StringVar(
-		&formatFlag, "format", "",
-		`output format: "human" or "agent" (default: auto-detect via agentdetection)`,
-	)
-
-	root.AddCommand(newCheckCmd(d, &formatFlag))
-	root.AddCommand(newRequestCmd(d, &formatFlag))
-	root.AddCommand(newViewCmd(d, &formatFlag))
+	root.AddCommand(newCheckCmd(d))
+	root.AddCommand(newRequestCmd(d))
+	root.AddCommand(newViewCmd(d))
 	root.AddCommand(newInitCmd(d))
 
 	return root
-}
-
-// makeFormatResolver builds a formatResolver from a flag pointer.
-func makeFormatResolver(flagPtr *string) formatResolver {
-	return func() (output.Format, error) {
-		if *flagPtr == "" {
-			return output.DefaultFormat(), nil
-		}
-		return output.ParseFormat(*flagPtr)
-	}
 }
 
 // Execute builds the production dependency set, constructs the root command,

@@ -63,6 +63,10 @@ func (t *Triggerer) RequestReview(pr PR, policy reviewer.Policy) error {
 		handle = copilotReviewHandle
 	case reviewer.ReviewerTypeUser, reviewer.ReviewerTypeGitHubApp:
 		handle = policy.Identity.Name
+	default:
+		// Guard: unknown reviewer type has no handle mapping — fail loudly rather
+		// than invoking `gh pr edit --add-reviewer ""` which gives a cryptic error.
+		return fmt.Errorf("unsupported reviewer type %q for RequestReview", policy.Identity.Type)
 	}
 
 	_, _, err := t.exec("pr", "edit", number, "--repo", repo, "--add-reviewer", handle)

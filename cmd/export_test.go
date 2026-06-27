@@ -10,7 +10,6 @@ import (
 	"github.com/sushichan044/mergeable-please/internal/config"
 	"github.com/sushichan044/mergeable-please/internal/core"
 	"github.com/sushichan044/mergeable-please/internal/core/reviewer"
-	"github.com/sushichan044/mergeable-please/internal/output"
 )
 
 // TestDeps is the public surface for injecting test doubles into cmd tests.
@@ -68,39 +67,23 @@ func toDeps(td TestDeps) deps {
 	}
 }
 
-// RunCheckForTest executes the check command with the given test deps and format string.
+// RunCheckForTest executes the check command with the given test deps.
 // args are the positional PR arguments (0 or 1 element).
-func RunCheckForTest(
-	ctx context.Context,
-	td TestDeps,
-	formatStr string,
-	args []string,
-) error {
-	d := toDeps(td)
-	resolveFormat := formatResolver(func() (output.Format, error) {
-		if formatStr == "" {
-			return output.DefaultFormat(), nil
-		}
-		return output.ParseFormat(formatStr)
-	})
-	return runCheck(ctx, d, resolveFormat, args)
+func RunCheckForTest(ctx context.Context, td TestDeps, args []string) error {
+	return runCheck(ctx, toDeps(td), args)
 }
 
 // RunRequestForTest executes the request command with the given test deps.
-func RunRequestForTest(
-	ctx context.Context,
-	td TestDeps,
-	reviewerFlag string,
-	args []string,
-) error {
-	d := toDeps(td)
-	resolveFormat := formatResolver(func() (output.Format, error) {
-		return output.DefaultFormat(), nil
-	})
-	return runRequest(ctx, d, resolveFormat, reviewerFlag, args)
+func RunRequestForTest(ctx context.Context, td TestDeps, reviewerFlag string, args []string) error {
+	return runRequest(ctx, toDeps(td), reviewerFlag, args)
 }
 
 // RunInitForTest executes the init command with the given test deps.
 func RunInitForTest(td TestDeps) error {
 	return runInit(toDeps(td))
+}
+
+// RunViewForTest executes the view command with the given test deps and condition string.
+func RunViewForTest(ctx context.Context, td TestDeps, condition string, args []string) error {
+	return runView(ctx, toDeps(td), condition, args)
 }

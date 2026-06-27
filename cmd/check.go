@@ -10,7 +10,7 @@ import (
 	"github.com/sushichan044/mergeable-please/internal/output"
 )
 
-func newCheckCmd(d deps, formatFlag *string) *cobra.Command {
+func newCheckCmd(d deps) *cobra.Command {
 	return &cobra.Command{
 		Use:   "check [pr]",
 		Short: "Check merge readiness of a pull request",
@@ -28,18 +28,12 @@ Exit codes:
 		Args:         cobra.MaximumNArgs(1),
 		SilenceUsage: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			resolveFormat := makeFormatResolver(formatFlag)
-			return runCheck(cmd.Context(), d, resolveFormat, args)
+			return runCheck(cmd.Context(), d, args)
 		},
 	}
 }
 
-func runCheck(ctx context.Context, d deps, resolveFormat formatResolver, args []string) error {
-	format, err := resolveFormat()
-	if err != nil {
-		return err
-	}
-
+func runCheck(ctx context.Context, d deps, args []string) error {
 	var prArg string
 	if len(args) > 0 {
 		prArg = args[0]
@@ -70,17 +64,16 @@ func runCheck(ctx context.Context, d deps, resolveFormat formatResolver, args []
 		loopState := reviewer.EvaluateLoop(policies, snapshot)
 		result.ReviewerLoop = &loopState
 
-		comments, commentsErr := d.threadComments(ctx, pr, policies)
-		if commentsErr != nil {
-			return fmt.Errorf("could not fetch reviewer thread comments: %w", commentsErr)
-		}
-		lv := buildLoopView(loopState, snapshot, policies, comments)
+		// Build concise loop view from the already-fetched snapshot.
+		// ThreadComments is NOT called here: check output shows counts + drill-in
+		// commands instead of comment bodies, keeping output token-efficient.
+		lv := buildConciseLoopView(loopState, snapshot, policies, pr)
 		loopView = &lv
 	}
 
 	result.Finalize()
 
-	if renderErr := output.RenderCheckResult(d.out, result, loopView, format); renderErr != nil {
+	if renderErr := output.RenderCheckResult(d.out, result, loopView); renderErr != nil {
 		return renderErr
 	}
 

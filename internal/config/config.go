@@ -220,7 +220,8 @@ func initAt(start string) (string, error) {
 	}
 
 	path := filepath.Join(root, defaultConfigName)
-	if err = os.WriteFile(path, defaultConfigTemplate, 0o600); err != nil {
+	// G306: 0644 is intentional — this is a user-editable project config file, not a secrets file.
+	if err = os.WriteFile(path, defaultConfigTemplate, 0o644); err != nil { //nolint:gosec // G306: user-editable config
 		return "", fmt.Errorf("config: cannot write %s: %w", path, err)
 	}
 

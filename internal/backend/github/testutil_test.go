@@ -10,6 +10,7 @@ type FakePRMergeResult struct {
 	ReviewDecision   string
 	HeadRefOid       string
 	Checks           []FakeCheck
+	StatusContexts   []FakeStatusContextCheck
 }
 
 // FakeCheck is one check context node (CheckRun kind) for test injection.
@@ -17,6 +18,15 @@ type FakeCheck struct {
 	Name       string
 	Status     string
 	Conclusion string
+	DetailsURL string
+	IsRequired bool
+}
+
+// FakeStatusContextCheck is one check context node (StatusContext kind) for test injection.
+type FakeStatusContextCheck struct {
+	Context    string
+	State      string
+	TargetURL  string
 	IsRequired bool
 }
 
@@ -31,14 +41,22 @@ func injectPRMergeResult(q any, r FakePRMergeResult) {
 	query.Repository.PullRequest.ReviewDecision = r.ReviewDecision
 	query.Repository.PullRequest.HeadRefOid = r.HeadRefOid
 
-	nodes := make([]checkContextNode, 0, len(r.Checks))
+	nodes := make([]checkContextNode, 0, len(r.Checks)+len(r.StatusContexts))
 	for _, c := range r.Checks {
 		var n checkContextNode
-		// All fake checks are mapped as CheckRun nodes.
 		n.CheckRun.Name = c.Name
 		n.CheckRun.Status = c.Status
 		n.CheckRun.Conclusion = c.Conclusion
+		n.CheckRun.DetailsURL = c.DetailsURL
 		n.CheckRun.IsRequired = c.IsRequired
+		nodes = append(nodes, n)
+	}
+	for _, sc := range r.StatusContexts {
+		var n checkContextNode
+		n.StatusContext.Context = sc.Context
+		n.StatusContext.State = sc.State
+		n.StatusContext.TargetURL = sc.TargetURL
+		n.StatusContext.IsRequired = sc.IsRequired
 		nodes = append(nodes, n)
 	}
 	query.Repository.PullRequest.StatusCheckRollup.Contexts.Nodes = nodes

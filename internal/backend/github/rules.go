@@ -2,6 +2,7 @@ package github
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/cli/go-gh/v2/pkg/api"
@@ -27,7 +28,23 @@ func fetchBranchRules(_ context.Context, pr backend.PRCoords) ([]backend.BranchR
 		return nil, fmt.Errorf("github rules: cannot create REST client: %w", err)
 	}
 
-	path := fmt.Sprintf("repos/%s/%s/rules/branches/%s", pr.Owner, pr.Repo, pr.Repo)
+	// The branch-rules path needs the PR's base branch name, not the repo name.
+	// Fetch it from the PR metadata before building the rules URL.
+	var prMeta struct {
+		Base struct {
+			Ref string `json:"ref"`
+		} `json:"base"`
+	}
+	prPath := fmt.Sprintf("repos/%s/%s/pulls/%d", pr.Owner, pr.Repo, pr.Number)
+	if err = restClient.Get(prPath, &prMeta); err != nil {
+		return nil, fmt.Errorf("github rules: cannot resolve base branch: %w", err)
+	}
+	baseBranch := prMeta.Base.Ref
+	if baseBranch == "" {
+		return nil, errors.New("github rules: PR response missing base.ref")
+	}
+
+	path := fmt.Sprintf("repos/%s/%s/rules/branches/%s", pr.Owner, pr.Repo, baseBranch)
 
 	var raw []branchRuleResponse
 	if getErr := restClient.Get(path, &raw); getErr != nil {

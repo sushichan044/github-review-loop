@@ -7,7 +7,6 @@ require (
 	github.com/Songmu/skillsmith v0.1.0
 	github.com/cli/go-gh/v2 v2.13.0
 	github.com/cli/shurcooL-graphql v0.0.4
-	github.com/jehiah/agentdetection v0.0.0-20260504180809-d55902bec14c
 	github.com/spf13/cobra v1.10.2
 	github.com/stretchr/testify v1.11.1
 	golang.org/x/mod v0.34.0

@@ -25,6 +25,7 @@ github:
       goal:
         all-conversations-resolved: true
       max-rallies: 5
+    
 
     # - type: user
     #   name: your-login
@@ -32,9 +33,9 @@ github:
     #     approved: true
     #   max-rallies: 5
 
-    # - type: github-app
-    #   name: coderabbitai
-    #   goal:
-    #     approved: true
-    #   max-rallies: 5
-    #   trigger: "@coderabbitai review"
+    - type: github-app
+      name: coderabbitai
+      goal:
+        all-conversations-resolved: true
+      max-rallies: 5
+      trigger: "@coderabbitai review"

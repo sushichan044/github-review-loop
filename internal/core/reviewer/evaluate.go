@@ -114,6 +114,11 @@ func Evaluate(p Policy, s Snapshot) State {
 
 // EvaluateLoop evaluates all policies and returns the aggregate loop state.
 // Done is true only when every reviewer is in a terminal phase.
+//
+// When policies is empty, Done is vacuously true (all-of-nothing is trivially
+// satisfied). Callers that want to distinguish "no reviewers configured" from
+// "all reviewers reached their goal" should guard on len(policies) == 0 before
+// trusting Done, as check.go and view.go both do via resolvePolicies.
 func EvaluateLoop(policies []Policy, s Snapshot) LoopState {
 	reviewers := make([]State, 0, len(policies))
 	allDone := true

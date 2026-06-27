@@ -12,7 +12,7 @@ import (
 	"github.com/sushichan044/mergeable-please/internal/core/reviewer"
 )
 
-func newRequestCmd(d deps, formatFlag *string) *cobra.Command {
+func newRequestCmd(d deps) *cobra.Command {
 	var reviewerFlag string
 
 	cmd := &cobra.Command{
@@ -32,8 +32,7 @@ Requires reviewers to be configured in .mergeable-please.yml.`,
 		Args:         cobra.MaximumNArgs(1),
 		SilenceUsage: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			resolveFormat := makeFormatResolver(formatFlag)
-			return runRequest(cmd.Context(), d, resolveFormat, reviewerFlag, args)
+			return runRequest(cmd.Context(), d, reviewerFlag, args)
 		},
 	}
 
@@ -48,14 +47,9 @@ Requires reviewers to be configured in .mergeable-please.yml.`,
 func runRequest(
 	ctx context.Context,
 	d deps,
-	resolveFormat formatResolver,
 	reviewerFlag string,
 	args []string,
 ) error {
-	if _, err := resolveFormat(); err != nil {
-		return err
-	}
-
 	policies, err := resolvePolicies(d)
 	if err != nil {
 		return err
@@ -120,13 +114,13 @@ func selectTargets(
 
 // matchesFlag reports whether the identity matches the "type:name" (or "type") flag value.
 func matchesFlag(id reviewer.Identity, flag string) bool {
-	return strings.EqualFold(identityKeyFromReviewerIdentity(id), flag)
+	return strings.EqualFold(github.IdentityKey(id), flag)
 }
 
 // fireRequests iterates over targets, firing re-requests for eligible reviewers.
 func fireRequests(d deps, pr github.PR, targets []reviewerTarget) error {
 	for _, t := range targets {
-		idStr := identityKeyFromReviewerIdentity(t.state.Identity)
+		idStr := github.IdentityKey(t.state.Identity)
 
 		if !t.state.CanRerequest {
 			if _, err := fmt.Fprintf(d.out, "SKIP  %s — %s\n", idStr, t.state.BlockReason); err != nil {

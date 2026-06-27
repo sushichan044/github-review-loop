@@ -84,7 +84,7 @@ func ThreadComments(
 			continue
 		}
 
-		key := identityKey(identity)
+		key := IdentityKey(identity)
 		result[key] = append(result[key], ThreadComment{
 			Author:    t.AuthorLogin,
 			Body:      t.Body,
@@ -97,9 +97,9 @@ func ThreadComments(
 	return result, nil
 }
 
-// identityKey returns the canonical "type:name" string for a reviewer identity.
+// IdentityKey returns the canonical "type:name" string for a reviewer identity.
 // This matches the format used by output.formatIdentity.
-func identityKey(id reviewer.Identity) string {
+func IdentityKey(id reviewer.Identity) string {
 	if id.Name == "" {
 		return string(id.Type)
 	}

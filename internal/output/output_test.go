@@ -13,470 +13,219 @@ import (
 	"github.com/sushichan044/mergeable-please/internal/output"
 )
 
-// ── FormatFor ────────────────────────────────────────────────────────────────
-
-func TestFormatFor(t *testing.T) {
-	t.Parallel()
-
-	assert.Equal(t, output.FormatAgent, output.FormatFor(true), "isAgent=true should yield FormatAgent")
-	assert.Equal(t, output.FormatHuman, output.FormatFor(false), "isAgent=false should yield FormatHuman")
-}
-
-// ── DefaultFormat ─────────────────────────────────────────────────────────────
-
-// TestDefaultFormat exercises DefaultFormat() to keep it reachable for deadcode
-// analysis. The concrete agent/human mapping is the spec of TestFormatFor; because
-// DefaultFormat() depends on the ambient environment (agentdetection.IsAgent()),
-// this test only asserts the result is a valid Format — keeping it deterministic
-// across both agent and non-agent (CI) environments.
-func TestDefaultFormat(t *testing.T) {
-	t.Parallel()
-
-	f := output.DefaultFormat()
-	_, err := output.ParseFormat(string(f))
-	require.NoError(t, err, "DefaultFormat() must return a valid Format")
-}
-
-// ── ParseFormat ──────────────────────────────────────────────────────────────
-
-func TestParseFormat(t *testing.T) {
-	t.Parallel()
-
-	t.Run("valid_agent", func(t *testing.T) {
-		t.Parallel()
-		f, err := output.ParseFormat("agent")
-		require.NoError(t, err)
-		assert.Equal(t, output.FormatAgent, f)
-	})
-
-	t.Run("valid_human", func(t *testing.T) {
-		t.Parallel()
-		f, err := output.ParseFormat("human")
-		require.NoError(t, err)
-		assert.Equal(t, output.FormatHuman, f)
-	})
-
-	t.Run("invalid", func(t *testing.T) {
-		t.Parallel()
-		_, err := output.ParseFormat("unknown")
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "unknown")
-	})
-}
-
-// ── Render helpers ───────────────────────────────────────────────────────────
-
-func renderString(t *testing.T, v output.LoopView, f output.Format) string {
+func renderString(t *testing.T, v output.LoopView) string {
 	t.Helper()
 	var sb strings.Builder
-	err := output.Render(&sb, v, f)
-	require.NoError(t, err)
+	require.NoError(t, output.Render(&sb, v))
+	return sb.String()
+}
+
+func renderCheckString(t *testing.T, r core.CheckResult, loopView *output.LoopView) string {
+	t.Helper()
+	var sb strings.Builder
+	require.NoError(t, output.RenderCheckResult(&sb, r, loopView))
 	return sb.String()
 }
 
 func aliceIdentity() reviewer.Identity {
-	return reviewer.Identity{
-		Type: reviewer.ReviewerTypeUser,
-		Name: "alice",
-	}
+	return reviewer.Identity{Type: reviewer.ReviewerTypeUser, Name: "alice"}
 }
 
-// ── GoalMet reviewer ─────────────────────────────────────────────────────────
+// ── Reviewer loop rendering ───────────────────────────────────────────────────
 
 func TestRender_GoalMet(t *testing.T) {
 	t.Parallel()
 
-	view := output.LoopView{
-		Reviewers: []output.ReviewerView{
-			{
-				Identity:   aliceIdentity(),
-				Goal:       reviewer.GoalApproved,
-				Phase:      reviewer.PhaseGoalMet,
-				RallyCount: 1,
-				MaxRallies: 3,
-				GoalMet:    true,
-			},
-		},
-	}
+	out := renderString(t, output.LoopView{Reviewers: []output.ReviewerView{{
+		Identity: aliceIdentity(), Goal: reviewer.GoalApproved,
+		Phase: reviewer.PhaseGoalMet, RallyCount: 1, MaxRallies: 3, GoalMet: true,
+	}}})
 
-	for _, f := range []output.Format{output.FormatHuman, output.FormatAgent} {
-		t.Run(string(f), func(t *testing.T) {
-			t.Parallel()
-			out := renderString(t, view, f)
-
-			assert.Contains(t, out, "goal-met", "phase should appear")
-			assert.Contains(t, out, "alice", "reviewer name should appear")
-			assert.Contains(t, out, "1/3", "rally count should appear")
-			// next-action always present
-			assert.Contains(t, out, "Goal met", "next-action: goal met message")
-		})
-	}
+	assert.Contains(t, out, "goal-met", "phase should appear")
+	assert.Contains(t, out, "alice", "reviewer name should appear")
+	assert.Contains(t, out, "1/3", "rally count should appear")
+	assert.Contains(t, out, "Goal met", "next-action: goal met message")
 }
-
-// ── Exhausted reviewer ───────────────────────────────────────────────────────
 
 func TestRender_Exhausted(t *testing.T) {
 	t.Parallel()
 
-	view := output.LoopView{
-		Reviewers: []output.ReviewerView{
-			{
-				Identity:   aliceIdentity(),
-				Goal:       reviewer.GoalApproved,
-				Phase:      reviewer.PhaseExhausted,
-				RallyCount: 3,
-				MaxRallies: 3,
-				GoalMet:    false,
-			},
-		},
-	}
+	out := renderString(t, output.LoopView{Reviewers: []output.ReviewerView{{
+		Identity: aliceIdentity(), Goal: reviewer.GoalApproved,
+		Phase: reviewer.PhaseExhausted, RallyCount: 3, MaxRallies: 3,
+	}}})
 
-	for _, f := range []output.Format{output.FormatHuman, output.FormatAgent} {
-		t.Run(string(f), func(t *testing.T) {
-			t.Parallel()
-			out := renderString(t, view, f)
-
-			assert.Contains(t, out, "exhausted", "phase should appear")
-			assert.Contains(t, out, "3/3", "rally count should appear")
-			// next-action always present with WARNING
-			assert.Contains(t, out, "WARNING", "next-action: exhausted warning")
-			assert.Contains(t, out, "max-rallies", "next-action: suggest raising max-rallies")
-		})
-	}
+	assert.Contains(t, out, "exhausted", "phase should appear")
+	assert.Contains(t, out, "3/3", "rally count should appear")
+	assert.Contains(t, out, "WARNING", "next-action: exhausted warning")
+	assert.Contains(t, out, "max-rallies", "next-action: suggest raising max-rallies")
 }
-
-// ── Active + CanRerequest reviewer ───────────────────────────────────────────
 
 func TestRender_Active_CanRerequest(t *testing.T) {
 	t.Parallel()
 
-	view := output.LoopView{
-		Reviewers: []output.ReviewerView{
-			{
-				Identity:     aliceIdentity(),
-				Goal:         reviewer.GoalApproved,
-				Phase:        reviewer.PhaseActive,
-				RallyCount:   1,
-				MaxRallies:   3,
-				GoalMet:      false,
-				CanRerequest: true,
-			},
-		},
-	}
+	out := renderString(t, output.LoopView{Reviewers: []output.ReviewerView{{
+		Identity: aliceIdentity(), Goal: reviewer.GoalApproved,
+		Phase: reviewer.PhaseActive, RallyCount: 1, MaxRallies: 3, CanRerequest: true,
+	}}})
 
-	t.Run("human", func(t *testing.T) {
-		t.Parallel()
-		out := renderString(t, view, output.FormatHuman)
-
-		assert.Contains(t, out, "active", "phase should appear")
-		assert.Contains(t, out, "request", "next-action: suggest request command")
-		assert.Contains(t, out, "user:alice", "reviewer identity in command")
-		// HUMAN format must NOT contain the background-shell wait hint
-		assert.NotContains(t, out, "sleep", "human format should not include background-shell hint")
-	})
-
-	t.Run("agent", func(t *testing.T) {
-		t.Parallel()
-		out := renderString(t, view, output.FormatAgent)
-
-		assert.Contains(t, out, "active", "phase should appear")
-		assert.Contains(t, out, "request", "next-action: suggest request command")
-		assert.Contains(t, out, "user:alice", "reviewer identity in command")
-		// AGENT format MUST contain the background-shell wait hint
-		assert.Contains(t, out, "sleep", "agent format should include background-shell hint")
-		assert.Contains(t, out, "check", "agent format should reference check command")
-	})
+	assert.Contains(t, out, "active", "phase should appear")
+	assert.Contains(t, out, "request", "next-action: suggest request command")
+	assert.Contains(t, out, "user:alice", "reviewer identity in command")
+	assert.Contains(t, out, "sleep", "next-action includes a non-blocking wait hint")
+	assert.Contains(t, out, "check", "next-action references the check command")
 }
-
-// ── Active + blocked reviewer ─────────────────────────────────────────────────
 
 func TestRender_Active_Blocked(t *testing.T) {
 	t.Parallel()
 
-	blockReason := "no new commit since last review"
-	view := output.LoopView{
-		Reviewers: []output.ReviewerView{
-			{
-				Identity:     aliceIdentity(),
-				Goal:         reviewer.GoalApproved,
-				Phase:        reviewer.PhaseActive,
-				RallyCount:   1,
-				MaxRallies:   3,
-				GoalMet:      false,
-				CanRerequest: false,
-				BlockReason:  blockReason,
-			},
-		},
-	}
+	const blockReason = "no new commit since last review"
+	out := renderString(t, output.LoopView{Reviewers: []output.ReviewerView{{
+		Identity: aliceIdentity(), Goal: reviewer.GoalApproved,
+		Phase: reviewer.PhaseActive, RallyCount: 1, MaxRallies: 3, BlockReason: blockReason,
+	}}})
 
-	for _, f := range []output.Format{output.FormatHuman, output.FormatAgent} {
-		t.Run(string(f), func(t *testing.T) {
-			t.Parallel()
-			out := renderString(t, view, f)
-
-			assert.Contains(t, out, "active", "phase should appear")
-			assert.Contains(t, out, blockReason, "block reason should appear")
-			assert.Contains(t, out, "push", "next-action: instruct to push a new commit")
-		})
-	}
+	assert.Contains(t, out, "active", "phase should appear")
+	assert.Contains(t, out, blockReason, "block reason should appear")
+	assert.Contains(t, out, "push", "next-action: instruct to push a new commit")
 }
 
-// ── Reviewer with unresolved + new comments ───────────────────────────────────
-
-func TestRender_WithComments(t *testing.T) {
+func TestRender_FullMode_ShowsCommentBodies(t *testing.T) {
 	t.Parallel()
 
-	view := output.LoopView{
-		Reviewers: []output.ReviewerView{
-			{
-				Identity:     aliceIdentity(),
-				Goal:         reviewer.GoalAllConversationsResolved,
-				Phase:        reviewer.PhaseActive,
-				RallyCount:   1,
-				MaxRallies:   3,
-				GoalMet:      false,
-				CanRerequest: false,
-				BlockReason:  "no new commit since last review",
-				UnresolvedComments: []output.CommentView{
-					{
-						Author: "alice",
-						Body:   "This looks wrong here.",
-						URL:    "https://example.com/c/1",
-						At:     time.Now(),
-					},
-				},
-				NewComments: []output.CommentView{
-					{
-						Author: "alice",
-						Body:   "Please fix the nit.",
-						URL:    "https://example.com/c/2",
-						At:     time.Now(),
-					},
-				},
-			},
+	out := renderString(t, output.LoopView{Reviewers: []output.ReviewerView{{
+		Identity: aliceIdentity(), Goal: reviewer.GoalAllConversationsResolved,
+		Phase: reviewer.PhaseActive, RallyCount: 1, MaxRallies: 3,
+		UnresolvedComments: []output.CommentView{
+			{Author: "alice", Body: "This looks wrong here.", URL: "https://example.com/c/1", At: time.Now()},
 		},
-	}
+	}}})
 
-	for _, f := range []output.Format{output.FormatHuman, output.FormatAgent} {
-		t.Run(string(f), func(t *testing.T) {
-			t.Parallel()
-			out := renderString(t, view, f)
-
-			// Both comment bodies must appear
-			assert.Contains(t, out, "This looks wrong here.", "unresolved comment body should appear")
-			assert.Contains(t, out, "Please fix the nit.", "new comment body should appear")
-			// next-action always present
-			assert.Contains(t, out, "push", "next-action must be present")
-		})
-	}
+	assert.Contains(t, out, "This looks wrong here.", "full mode renders comment bodies")
 }
 
-// ── Done loop ─────────────────────────────────────────────────────────────────
+func TestRender_ConciseMode_ShowsCountAndDrillIn_NotBodies(t *testing.T) {
+	t.Parallel()
+
+	const drillIn = "gh api graphql -f query='...' --jq '...'"
+	out := renderString(t, output.LoopView{Reviewers: []output.ReviewerView{{
+		Identity: aliceIdentity(), Goal: reviewer.GoalAllConversationsResolved,
+		Phase: reviewer.PhaseActive, RallyCount: 1, MaxRallies: 3,
+		UnresolvedCount: 5, DrillInCmd: drillIn,
+		// UnresolvedComments deliberately empty — concise mode.
+	}}})
+
+	assert.Contains(t, out, "5 thread(s)", "concise mode shows the unresolved count")
+	assert.Contains(t, out, drillIn, "concise mode shows the drill-in command")
+}
 
 func TestRender_DoneLoop(t *testing.T) {
 	t.Parallel()
 
-	view := output.LoopView{
-		Reviewers: []output.ReviewerView{
-			{
-				Identity:   aliceIdentity(),
-				Goal:       reviewer.GoalApproved,
-				Phase:      reviewer.PhaseGoalMet,
-				RallyCount: 1,
-				MaxRallies: 3,
-				GoalMet:    true,
-			},
-		},
+	out := renderString(t, output.LoopView{
 		Done: true,
-	}
+		Reviewers: []output.ReviewerView{{
+			Identity: aliceIdentity(), Goal: reviewer.GoalApproved,
+			Phase: reviewer.PhaseGoalMet, RallyCount: 1, MaxRallies: 3, GoalMet: true,
+		}},
+	})
 
-	for _, f := range []output.Format{output.FormatHuman, output.FormatAgent} {
-		t.Run(string(f), func(t *testing.T) {
-			t.Parallel()
-			out := renderString(t, view, f)
-
-			// Loop completion line must be present
-			assert.Contains(t, out, "Loop complete", "done loop should emit completion line")
-		})
-	}
+	assert.Contains(t, out, "Loop complete", "done loop emits completion line")
 }
-
-// ── Done loop with exhausted reviewer ─────────────────────────────────────────
 
 func TestRender_DoneLoop_WithExhausted(t *testing.T) {
 	t.Parallel()
 
-	bobID := reviewer.Identity{
-		Type: reviewer.ReviewerTypeUser,
-		Name: "bob",
-	}
-	view := output.LoopView{
+	out := renderString(t, output.LoopView{
+		Done: true,
 		Reviewers: []output.ReviewerView{
+			{Identity: aliceIdentity(), Goal: reviewer.GoalApproved, Phase: reviewer.PhaseGoalMet, GoalMet: true},
 			{
-				Identity:   aliceIdentity(),
-				Goal:       reviewer.GoalApproved,
-				Phase:      reviewer.PhaseGoalMet,
-				RallyCount: 1,
-				MaxRallies: 3,
-				GoalMet:    true,
-			},
-			{
-				Identity:   bobID,
-				Goal:       reviewer.GoalApproved,
-				Phase:      reviewer.PhaseExhausted,
-				RallyCount: 3,
-				MaxRallies: 3,
-				GoalMet:    false,
+				Identity: reviewer.Identity{Type: reviewer.ReviewerTypeUser, Name: "bob"},
+				Goal:     reviewer.GoalApproved, Phase: reviewer.PhaseExhausted, RallyCount: 3, MaxRallies: 3,
 			},
 		},
-		Done: true,
-	}
+	})
 
-	for _, f := range []output.Format{output.FormatHuman, output.FormatAgent} {
-		t.Run(string(f), func(t *testing.T) {
-			t.Parallel()
-			out := renderString(t, view, f)
-
-			assert.Contains(t, out, "Loop complete", "done loop should emit completion line")
-			assert.Contains(t, out, "bob", "exhausted reviewer should be mentioned")
-		})
-	}
+	assert.Contains(t, out, "Loop complete", "done loop emits completion line")
+	assert.Contains(t, out, "bob", "exhausted reviewer should be named in the warning")
 }
-
-// ── Reviewer ordering is stable (slice order) ─────────────────────────────────
 
 func TestRender_StableOrder(t *testing.T) {
 	t.Parallel()
 
-	aliceID := reviewer.Identity{Type: reviewer.ReviewerTypeUser, Name: "alice"}
-	bobID := reviewer.Identity{Type: reviewer.ReviewerTypeUser, Name: "bob"}
-
-	view := output.LoopView{
-		Reviewers: []output.ReviewerView{
-			{
-				Identity:   aliceID,
-				Goal:       reviewer.GoalApproved,
-				Phase:      reviewer.PhaseGoalMet,
-				RallyCount: 1,
-				MaxRallies: 3,
-				GoalMet:    true,
-			},
-			{
-				Identity:   bobID,
-				Goal:       reviewer.GoalApproved,
-				Phase:      reviewer.PhaseGoalMet,
-				RallyCount: 2,
-				MaxRallies: 3,
-				GoalMet:    true,
-			},
+	out := renderString(t, output.LoopView{Reviewers: []output.ReviewerView{
+		{
+			Identity: reviewer.Identity{Type: reviewer.ReviewerTypeUser, Name: "alice"},
+			Phase:    reviewer.PhaseGoalMet,
+			GoalMet:  true,
 		},
-	}
+		{
+			Identity: reviewer.Identity{Type: reviewer.ReviewerTypeUser, Name: "bob"},
+			Phase:    reviewer.PhaseGoalMet,
+			GoalMet:  true,
+		},
+	}})
 
-	for _, f := range []output.Format{output.FormatHuman, output.FormatAgent} {
-		t.Run(string(f), func(t *testing.T) {
-			t.Parallel()
-			out := renderString(t, view, f)
-			alicePos := strings.Index(out, "alice")
-			bobPos := strings.Index(out, "bob")
-			assert.Less(t, alicePos, bobPos, "alice (first in slice) should appear before bob")
-		})
-	}
+	assert.Less(t, strings.Index(out, "alice"), strings.Index(out, "bob"),
+		"alice (first in slice) should appear before bob")
+}
+
+func TestRender_MarkdownHierarchy(t *testing.T) {
+	t.Parallel()
+
+	out := renderString(t, output.LoopView{Reviewers: []output.ReviewerView{{
+		Identity: aliceIdentity(), Goal: reviewer.GoalApproved,
+		Phase: reviewer.PhaseGoalMet, GoalMet: true,
+	}}})
+
+	// The loop is an H2 section; each reviewer is an H3 under it — never the same level.
+	assert.Contains(t, out, "## Reviewer loop", "loop section is H2")
+	assert.Contains(t, out, "### user:alice", "each reviewer is H3")
 }
 
 // ── RenderCheckResult ─────────────────────────────────────────────────────────
 
-func renderCheckString(t *testing.T, r core.CheckResult, loopView *output.LoopView, f output.Format) string {
-	t.Helper()
-	var sb strings.Builder
-	err := output.RenderCheckResult(&sb, r, loopView, f)
-	require.NoError(t, err)
-	return sb.String()
-}
-
-func TestRenderCheckResult_Satisfied_EmitsStatusLine(t *testing.T) {
+func TestRenderCheckResult_StatusLine(t *testing.T) {
 	t.Parallel()
 
-	r := core.CheckResult{Satisfied: true}
+	assert.Contains(t, renderCheckString(t, core.CheckResult{Satisfied: true}, nil), "status: satisfied")
 
-	for _, f := range []output.Format{output.FormatHuman, output.FormatAgent} {
-		t.Run(string(f), func(t *testing.T) {
-			t.Parallel()
-			out := renderCheckString(t, r, nil, f)
-			assert.Contains(t, out, "status: satisfied")
-		})
-	}
-}
-
-func TestRenderCheckResult_Blocked_EmitsStatusLine(t *testing.T) {
-	t.Parallel()
-
-	r := core.CheckResult{
-		Satisfied: false,
-		Blockers: []core.Condition{
-			{Kind: core.ConditionConflict, Severity: core.SeverityBlocker, Title: "Merge conflicts"},
-		},
-	}
-
-	for _, f := range []output.Format{output.FormatHuman, output.FormatAgent} {
-		t.Run(string(f), func(t *testing.T) {
-			t.Parallel()
-			out := renderCheckString(t, r, nil, f)
-			assert.Contains(t, out, "status: blocked")
-		})
-	}
+	blocked := core.CheckResult{Blockers: []core.Condition{
+		{Kind: core.ConditionConflict, Severity: core.SeverityBlocker, Title: "Merge conflicts"},
+	}}
+	assert.Contains(t, renderCheckString(t, blocked, nil), "status: blocked")
 }
 
 func TestRenderCheckResult_Blockers_Shown(t *testing.T) {
 	t.Parallel()
 
-	r := core.CheckResult{
-		Satisfied: false,
-		Blockers: []core.Condition{
-			{
-				Kind:            core.ConditionCheckFailing,
-				Severity:        core.SeverityBlocker,
-				Title:           "Required CI check failing",
-				Detail:          "build / lint",
-				SuggestedAction: "Fix lint errors and push.",
-				DrillInCmd:      "mergeable-please view --condition checks",
-			},
-		},
-	}
+	out := renderCheckString(t, core.CheckResult{Blockers: []core.Condition{{
+		Kind: core.ConditionCheckFailing, Severity: core.SeverityBlocker,
+		Title: "Required CI check failing", Detail: "build / lint",
+		SuggestedAction: "Fix lint errors and push.", DrillInCmd: "gh pr checks 42",
+	}}}, nil)
 
-	for _, f := range []output.Format{output.FormatHuman, output.FormatAgent} {
-		t.Run(string(f), func(t *testing.T) {
-			t.Parallel()
-			out := renderCheckString(t, r, nil, f)
-			assert.Contains(t, out, "check-failing")
-			assert.Contains(t, out, "build / lint")
-		})
-	}
+	assert.Contains(t, out, "## Blockers")
+	assert.Contains(t, out, "check-failing")
+	assert.Contains(t, out, "build / lint")
+	assert.Contains(t, out, "gh pr checks 42", "drill-in command should appear")
 }
 
-func TestRenderCheckResult_Advisories_AlwaysShown(t *testing.T) {
+func TestRenderCheckResult_Advisories_ShownEvenWhenSatisfied(t *testing.T) {
 	t.Parallel()
 
-	// Satisfied with only an advisory — advisory must still appear.
-	r := core.CheckResult{
+	out := renderCheckString(t, core.CheckResult{
 		Satisfied: true,
-		Advisories: []core.Condition{
-			{
-				Kind:     core.ConditionApprovalRequired,
-				Severity: core.SeverityAdvisory,
-				Title:    "Human approval required",
-				Detail:   "reviewDecision=REVIEW_REQUIRED",
-			},
-		},
-	}
+		Advisories: []core.Condition{{
+			Kind: core.ConditionApprovalRequired, Severity: core.SeverityAdvisory,
+			Title: "Human approval required", Detail: "reviewDecision=REVIEW_REQUIRED",
+		}},
+	}, nil)
 
-	for _, f := range []output.Format{output.FormatHuman, output.FormatAgent} {
-		t.Run(string(f), func(t *testing.T) {
-			t.Parallel()
-			out := renderCheckString(t, r, nil, f)
-			assert.Contains(t, out, "status: satisfied", "satisfied with advisory only")
-			assert.Contains(t, out, "approval-required", "advisory must appear even when satisfied")
-		})
-	}
+	assert.Contains(t, out, "status: satisfied")
+	assert.Contains(t, out, "## Advisories")
+	assert.Contains(t, out, "approval-required", "advisory appears even when satisfied")
 }
 
 func TestRenderCheckResult_ReviewerLoop_DetailRendered(t *testing.T) {
@@ -484,27 +233,36 @@ func TestRenderCheckResult_ReviewerLoop_DetailRendered(t *testing.T) {
 
 	loopView := &output.LoopView{
 		Done: true,
-		Reviewers: []output.ReviewerView{
-			{
-				Identity:   aliceIdentity(),
-				Goal:       reviewer.GoalApproved,
-				Phase:      reviewer.PhaseGoalMet,
-				RallyCount: 1,
-				MaxRallies: 3,
-				GoalMet:    true,
-			},
-		},
+		Reviewers: []output.ReviewerView{{
+			Identity: aliceIdentity(), Goal: reviewer.GoalApproved,
+			Phase: reviewer.PhaseGoalMet, RallyCount: 1, MaxRallies: 3, GoalMet: true,
+		}},
 	}
-	r := core.CheckResult{Satisfied: true}
+	out := renderCheckString(t, core.CheckResult{Satisfied: true}, loopView)
 
-	for _, f := range []output.Format{output.FormatHuman, output.FormatAgent} {
-		t.Run(string(f), func(t *testing.T) {
-			t.Parallel()
-			out := renderCheckString(t, r, loopView, f)
-			assert.Contains(t, out, "Reviewer loop", "reviewer loop header must appear")
-			// The fix: per-reviewer detail must render, not just the header.
-			assert.Contains(t, out, "alice", "reviewer identity must be rendered")
-			assert.Contains(t, out, "goal-met", "reviewer phase must be rendered")
-		})
-	}
+	assert.Contains(t, out, "## Reviewer loop", "reviewer loop header")
+	assert.Contains(t, out, "### user:alice", "per-reviewer detail is rendered, not just a header")
+	assert.Contains(t, out, "goal-met", "reviewer phase is rendered")
+}
+
+// ── RenderDimensionView ───────────────────────────────────────────────────────
+
+func TestRenderDimensionView_NoStatusLine(t *testing.T) {
+	t.Parallel()
+
+	var sb strings.Builder
+	blockers := []core.Condition{{Kind: core.ConditionCheckFailing, Title: "Required CI check failing"}}
+	require.NoError(t, output.RenderDimensionView(&sb, blockers, nil))
+	out := sb.String()
+
+	assert.NotContains(t, out, "status:", "dimension view must not emit a global status verdict")
+	assert.Contains(t, out, "check-failing")
+}
+
+func TestRenderDimensionView_Empty(t *testing.T) {
+	t.Parallel()
+
+	var sb strings.Builder
+	require.NoError(t, output.RenderDimensionView(&sb, nil, nil))
+	assert.Contains(t, sb.String(), "No conditions found")
 }

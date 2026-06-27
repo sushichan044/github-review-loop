@@ -48,6 +48,10 @@ const (
 	// ConditionMergeEligibilityPending is a blocker: mergeable/mergeStateStatus is UNKNOWN —
 	// GitHub is still computing merge eligibility. Re-run in 15-30 seconds.
 	ConditionMergeEligibilityPending ConditionKind = "merge-eligibility-pending"
+
+	// ConditionCheckTruncated is an advisory: GitHub returned more than 100 status checks
+	// and the list was truncated. Run `gh pr checks <n>` for the full list.
+	ConditionCheckTruncated ConditionKind = "check-truncated"
 )
 
 // Condition is a single merge-readiness finding.

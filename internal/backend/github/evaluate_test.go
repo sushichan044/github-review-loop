@@ -48,7 +48,7 @@ func TestBundledEvaluate_UNKNOWN_ReturnsMergeEligibilityPending(t *testing.T) {
 
 	result, err := be.BundledEvaluate(context.Background(), pr())
 	require.NoError(t, err)
-	assert.False(t, result.Satisfied)
+	// Satisfied is only set by Finalize; assert the concrete conditions instead.
 	require.Len(t, result.Blockers, 1)
 	assert.Equal(t, core.ConditionMergeEligibilityPending, result.Blockers[0].Kind)
 }
@@ -258,6 +258,72 @@ func TestBundledEvaluate_UNKNOWN_RetriesUntilExhausted(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, 2, sleepCalls, "should sleep between retries")
 	assert.Equal(t, core.ConditionMergeEligibilityPending, result.Blockers[0].Kind)
+}
+
+func TestBundledEvaluate_FailingCheck_DrillInCmdContainsGhPrChecks(t *testing.T) {
+	t.Parallel()
+
+	// DrillInCmd must use `gh pr checks <N>` (not the old `mergeable-please view` form).
+	client := newEvalClient(github.ExportedFakePRMergeResult{
+		Mergeable:        "MERGEABLE",
+		MergeStateStatus: "BLOCKED",
+		Checks: []github.ExportedFakeCheck{
+			{Name: "ci", Status: "COMPLETED", Conclusion: "FAILURE", IsRequired: true},
+		},
+	})
+	be := github.NewBackend(client)
+
+	result, err := be.BundledEvaluate(context.Background(), pr())
+	require.NoError(t, err)
+	require.Len(t, result.Blockers, 1)
+	assert.Equal(t, core.ConditionCheckFailing, result.Blockers[0].Kind)
+	assert.Contains(
+		t,
+		result.Blockers[0].DrillInCmd,
+		"gh pr checks 1",
+		"drill-in must reference gh pr checks with PR number",
+	)
+}
+
+func TestBundledEvaluate_StatusContext_FailingRequired_ReturnsCheckFailingBlocker(t *testing.T) {
+	t.Parallel()
+
+	// Verify the StatusContext branch of collectRequiredCheckNames.
+	client := newEvalClient(github.ExportedFakePRMergeResult{
+		Mergeable:        "MERGEABLE",
+		MergeStateStatus: "BLOCKED",
+		StatusContexts: []github.ExportedFakeStatusContextCheck{
+			{Context: "legacy-ci", State: "FAILURE", IsRequired: true},
+			{Context: "optional-ci", State: "FAILURE", IsRequired: false},
+		},
+	})
+	be := github.NewBackend(client)
+
+	result, err := be.BundledEvaluate(context.Background(), pr())
+	require.NoError(t, err)
+	require.Len(t, result.Blockers, 1, "only the required status context should block")
+	assert.Equal(t, core.ConditionCheckFailing, result.Blockers[0].Kind)
+	assert.Contains(t, result.Blockers[0].Detail, "legacy-ci")
+	assert.NotContains(t, result.Blockers[0].Detail, "optional-ci")
+}
+
+func TestBundledEvaluate_StatusContext_PendingRequired_ReturnsCheckPendingBlocker(t *testing.T) {
+	t.Parallel()
+
+	client := newEvalClient(github.ExportedFakePRMergeResult{
+		Mergeable:        "MERGEABLE",
+		MergeStateStatus: "BLOCKED",
+		StatusContexts: []github.ExportedFakeStatusContextCheck{
+			{Context: "deploy-check", State: "PENDING", IsRequired: true},
+		},
+	})
+	be := github.NewBackend(client)
+
+	result, err := be.BundledEvaluate(context.Background(), pr())
+	require.NoError(t, err)
+	require.Len(t, result.Blockers, 1)
+	assert.Equal(t, core.ConditionCheckPending, result.Blockers[0].Kind)
+	assert.Contains(t, result.Blockers[0].Detail, "deploy-check")
 }
 
 // noSleep is an injectable sleeper that does nothing, for tests that trigger retry paths.

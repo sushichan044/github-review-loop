@@ -26,12 +26,13 @@ func InjectPRMergeResult(q any, r FakePRMergeResult) {
 // Exported type aliases so the external github_test package can reference
 // the fake data types defined in testutil_test.go.
 type (
-	ExportedFakeReview        = FakeReview
-	ExportedFakeReviewRequest = FakeReviewRequest
-	ExportedFakeIssueComment  = FakeIssueComment
-	ExportedFakeThread        = FakeThread
-	ExportedFakePRMergeResult = FakePRMergeResult
-	ExportedFakeCheck         = FakeCheck
+	ExportedFakeReview             = FakeReview
+	ExportedFakeReviewRequest      = FakeReviewRequest
+	ExportedFakeIssueComment       = FakeIssueComment
+	ExportedFakeThread             = FakeThread
+	ExportedFakePRMergeResult      = FakePRMergeResult
+	ExportedFakeCheck              = FakeCheck
+	ExportedFakeStatusContextCheck = FakeStatusContextCheck
 )
 
 // NewBackend exposes newBackend to the external github_test package.

@@ -1,5 +1,6 @@
-// Package output renders the review-loop state for human or agent consumption.
-// It is pure rendering: it changes representation only, never state, guard, or trigger behavior.
+// Package output renders merge-readiness results as Markdown for both humans and
+// AI agents. It is pure rendering: it changes representation only, never state,
+// guard, or trigger behavior.
 package output
 
 import (
@@ -8,50 +9,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/jehiah/agentdetection"
-
 	"github.com/sushichan044/mergeable-please/internal/core"
 	"github.com/sushichan044/mergeable-please/internal/core/reviewer"
 )
 
 const programName = "mergeable-please"
-
-// Format selects the output representation.
-type Format string
-
-const (
-	// FormatAgent produces verbose markdown output suitable for AI agents.
-	FormatAgent Format = "agent"
-	// FormatHuman produces concise plain-text output suitable for humans.
-	FormatHuman Format = "human"
-)
-
-// ParseFormat converts a string to a Format. It returns an error for unknown values.
-func ParseFormat(s string) (Format, error) {
-	switch Format(s) {
-	case FormatAgent:
-		return FormatAgent, nil
-	case FormatHuman:
-		return FormatHuman, nil
-	default:
-		return "", fmt.Errorf("unknown format %q: must be %q or %q", s, FormatAgent, FormatHuman)
-	}
-}
-
-// FormatFor returns the appropriate Format given whether the caller is an AI agent.
-// This is the testable pure-function core of format detection.
-func FormatFor(isAgent bool) Format {
-	if isAgent {
-		return FormatAgent
-	}
-
-	return FormatHuman
-}
-
-// DefaultFormat returns the default output format, detecting agent vs. human automatically.
-func DefaultFormat() Format {
-	return FormatFor(agentdetection.IsAgent())
-}
 
 // CommentView is a rendered snapshot of a single review comment.
 type CommentView struct {
@@ -61,226 +23,192 @@ type CommentView struct {
 	At     time.Time
 }
 
-// ReviewerView is the complete rendering context for one reviewer.
-// MaxRallies is populated by the caller (Task 7) from reviewer.Policy
-// because State does not carry it.
+// ReviewerView is the rendering context for one reviewer. MaxRallies is populated
+// by the caller from reviewer.Policy because reviewer.State does not carry it.
+//
+// Two rendering modes are supported:
+//   - Full mode (view --condition reviewers): populate UnresolvedComments with comment
+//     bodies. UnresolvedCount and DrillInCmd are ignored.
+//   - Concise mode (check): set UnresolvedCount and DrillInCmd; leave UnresolvedComments
+//     empty. The renderer shows only the count + a drill-in command.
 type ReviewerView struct {
-	Identity           reviewer.Identity
-	Goal               reviewer.Goal
-	Phase              reviewer.Phase
-	RallyCount         int
-	MaxRallies         int
-	GoalMet            bool
-	CanRerequest       bool
-	BlockReason        string
+	Identity     reviewer.Identity
+	Goal         reviewer.Goal
+	Phase        reviewer.Phase
+	RallyCount   int
+	MaxRallies   int
+	GoalMet      bool
+	CanRerequest bool
+	BlockReason  string
+
+	// Full mode (view --condition reviewers): comment bodies.
 	UnresolvedComments []CommentView
 	NewComments        []CommentView
+
+	// Concise mode (check): count + drill-in command, no bodies.
+	UnresolvedCount int    // number of unresolved review threads for this reviewer
+	DrillInCmd      string // gh command to fetch this reviewer's unresolved review comments
 }
 
-// LoopView is the complete rendering context for the entire review loop.
+// LoopView is the rendering context for the entire reviewer loop.
 type LoopView struct {
 	Reviewers []ReviewerView
 	Done      bool
 }
 
-// Render writes v to w in the chosen format.
-// Reviewers are rendered in the order they appear in v.Reviewers (stable, caller-controlled).
-func Render(w io.Writer, v LoopView, f Format) error {
-	switch f {
-	case FormatAgent:
-		return renderAgent(w, v)
-	case FormatHuman:
-		return renderHuman(w, v)
-	default:
-		return fmt.Errorf("unsupported format %q", f)
+// RenderCheckResult writes a [core.CheckResult] as Markdown. It always emits a
+// machine-readable "status: satisfied|blocked" line (the loop stop signal), then
+// the Blockers, Advisories, and reviewer-loop sections when present.
+func RenderCheckResult(w io.Writer, r core.CheckResult, loopView *LoopView) error {
+	status := "satisfied"
+	if !r.Satisfied {
+		status = "blocked"
 	}
+	if _, err := fmt.Fprintf(w, "status: %s\n", status); err != nil {
+		return err
+	}
+
+	if err := writeConditionsSection(w, "Blockers", r.Blockers); err != nil {
+		return err
+	}
+	if err := writeConditionsSection(w, "Advisories (require human action)", r.Advisories); err != nil {
+		return err
+	}
+	if loopView != nil {
+		if err := writeReviewerLoop(w, *loopView); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
-// ── Human format ────────────────────────────────────────────────────────────
+// RenderDimensionView renders a filtered set of conditions for a single dimension
+// (e.g. view --condition checks). It emits NO global "status:" verdict — only the
+// matching conditions — because a partial view that omits the reviewer loop must
+// not imply an authoritative pass/fail.
+func RenderDimensionView(w io.Writer, blockers, advisories []core.Condition) error {
+	if len(blockers) == 0 && len(advisories) == 0 {
+		_, err := fmt.Fprintln(w, "No conditions found for this dimension.")
+		return err
+	}
+	if err := writeConditionsSection(w, "Blockers", blockers); err != nil {
+		return err
+	}
+	return writeConditionsSection(w, "Advisories (require human action)", advisories)
+}
 
-func renderHuman(w io.Writer, v LoopView) error {
-	for i, r := range v.Reviewers {
-		if i > 0 {
-			if _, err := fmt.Fprintln(w); err != nil {
+// Render writes the full reviewer-loop view as Markdown (view --condition reviewers),
+// including comment bodies.
+func Render(w io.Writer, v LoopView) error {
+	return writeReviewerLoop(w, v)
+}
+
+// writeConditionsSection writes a "## <header>" section with one "### [kind] title"
+// subsection per condition. It writes nothing when conditions is empty.
+func writeConditionsSection(w io.Writer, header string, conditions []core.Condition) error {
+	if len(conditions) == 0 {
+		return nil
+	}
+	if _, err := fmt.Fprintf(w, "\n## %s\n", header); err != nil {
+		return err
+	}
+	for _, c := range conditions {
+		if _, err := fmt.Fprintf(w, "\n### [%s] %s\n", c.Kind, c.Title); err != nil {
+			return err
+		}
+		if c.Detail != "" {
+			if _, err := fmt.Fprintf(w, "- **Detail:** %s\n", c.Detail); err != nil {
 				return err
 			}
 		}
-
-		if err := renderReviewerHuman(w, r); err != nil {
-			return err
+		if c.SuggestedAction != "" {
+			if _, err := fmt.Fprintf(w, "- **Action:** %s\n", c.SuggestedAction); err != nil {
+				return err
+			}
+		}
+		if c.DrillInCmd != "" {
+			if _, err := fmt.Fprintf(w, "- **Drill in:** `%s`\n", c.DrillInCmd); err != nil {
+				return err
+			}
 		}
 	}
-
-	if v.Done {
-		if _, err := fmt.Fprintln(w); err != nil {
-			return err
-		}
-
-		if err := renderLoopDoneHuman(w, v); err != nil {
-			return err
-		}
-	}
-
 	return nil
 }
 
-func renderReviewerHuman(w io.Writer, r ReviewerView) error {
-	id := formatIdentity(r.Identity)
-	lines := []string{
-		fmt.Sprintf("Reviewer: %s", id),
-		fmt.Sprintf("Phase:    %s", r.Phase),
-		fmt.Sprintf("Rally:    %d/%d", r.RallyCount, r.MaxRallies),
-		fmt.Sprintf("Goal:     %s (met: %v)", r.Goal, r.GoalMet),
+func writeReviewerLoop(w io.Writer, v LoopView) error {
+	if _, err := fmt.Fprintln(w, "\n## Reviewer loop"); err != nil {
+		return err
 	}
-
-	if len(r.UnresolvedComments) > 0 {
-		lines = append(lines, fmt.Sprintf("Unresolved comments (%d):", len(r.UnresolvedComments)))
-		for _, c := range r.UnresolvedComments {
-			lines = append(lines, fmt.Sprintf("  - [%s] %s", c.Author, c.Body))
-		}
-	}
-
-	if len(r.NewComments) > 0 {
-		lines = append(lines, fmt.Sprintf("New comments since last rally (%d):", len(r.NewComments)))
-		for _, c := range r.NewComments {
-			lines = append(lines, fmt.Sprintf("  - [%s] %s", c.Author, c.Body))
-		}
-	}
-
-	lines = append(lines, fmt.Sprintf("Next action: %s", nextActionHuman(r)))
-
-	for _, l := range lines {
-		if _, err := fmt.Fprintln(w, l); err != nil {
-			return err
-		}
-	}
-
-	return nil
-}
-
-func nextActionHuman(r ReviewerView) string {
-	switch r.Phase {
-	case reviewer.PhaseGoalMet:
-		return "Goal met — nothing to do for this reviewer."
-
-	case reviewer.PhaseExhausted:
-		return fmt.Sprintf(
-			"WARNING: exhausted %d/%d rallies without meeting goal; stop or raise max-rallies.",
-			r.RallyCount, r.MaxRallies,
-		)
-
-	case reviewer.PhaseActive:
-		if r.CanRerequest {
-			return fmt.Sprintf(
-				"Ready to (re)request review: run `%s request --reviewer %s`.",
-				programName, formatIdentity(r.Identity),
-			)
-		}
-
-		return fmt.Sprintf(
-			"Re-request blocked (%s). Address unresolved comments and push a new commit before re-requesting.",
-			r.BlockReason,
-		)
-	}
-
-	// unreachable: all Phase values handled above
-	return ""
-}
-
-func renderLoopDoneHuman(w io.Writer, v LoopView) error {
-	var exhausted []string
 	for _, r := range v.Reviewers {
-		if r.Phase == reviewer.PhaseExhausted {
-			exhausted = append(exhausted, formatIdentity(r.Identity))
+		if err := writeReviewer(w, r); err != nil {
+			return err
 		}
 	}
-
-	msg := "Loop complete."
-	if len(exhausted) > 0 {
-		msg += fmt.Sprintf(
-			" Warning: the following reviewers exhausted their rallies without meeting the goal: %s.",
-			strings.Join(exhausted, ", "),
-		)
-	}
-
-	_, err := fmt.Fprintln(w, msg)
-
-	return err
+	return writeLoopDone(w, v)
 }
 
-// ── Agent format ─────────────────────────────────────────────────────────────
-
-func renderAgent(w io.Writer, v LoopView) error {
-	for i, r := range v.Reviewers {
-		if i > 0 {
-			if _, err := fmt.Fprintln(w); err != nil {
-				return err
-			}
-		}
-
-		if err := renderReviewerAgent(w, r); err != nil {
-			return err
-		}
+func writeReviewer(w io.Writer, r ReviewerView) error {
+	if _, err := fmt.Fprintf(w, "\n### %s\n", formatIdentity(r.Identity)); err != nil {
+		return err
 	}
-
-	if v.Done {
-		if _, err := fmt.Fprintln(w); err != nil {
-			return err
-		}
-
-		if err := renderLoopDoneAgent(w, v); err != nil {
-			return err
-		}
-	}
-
-	return nil
-}
-
-func renderReviewerAgent(w io.Writer, r ReviewerView) error {
-	id := formatIdentity(r.Identity)
-	sections := []string{
-		fmt.Sprintf("## Reviewer: `%s`", id),
+	header := []string{
 		fmt.Sprintf("- **Phase:** %s", r.Phase),
 		fmt.Sprintf("- **Rally:** %d/%d", r.RallyCount, r.MaxRallies),
 		fmt.Sprintf("- **Goal:** `%s` (met: %v)", r.Goal, r.GoalMet),
 	}
-
-	if len(r.UnresolvedComments) > 0 {
-		sections = append(sections, fmt.Sprintf("\n### Unresolved comments (%d)", len(r.UnresolvedComments)))
-
-		for _, c := range r.UnresolvedComments {
-			sections = append(sections, fmt.Sprintf("- **%s:** %s", c.Author, c.Body))
-
-			if c.URL != "" {
-				sections = append(sections, fmt.Sprintf("  <%s>", c.URL))
-			}
-		}
-	}
-
-	if len(r.NewComments) > 0 {
-		sections = append(sections, fmt.Sprintf("\n### New comments since last rally (%d)", len(r.NewComments)))
-
-		for _, c := range r.NewComments {
-			sections = append(sections, fmt.Sprintf("- **%s** (%s): %s", c.Author, c.At.Format(time.RFC3339), c.Body))
-
-			if c.URL != "" {
-				sections = append(sections, fmt.Sprintf("  <%s>", c.URL))
-			}
-		}
-	}
-
-	sections = append(sections, fmt.Sprintf("\n### Next action\n%s", nextActionAgent(r)))
-
-	for _, s := range sections {
-		if _, err := fmt.Fprintln(w, s); err != nil {
+	for _, line := range header {
+		if _, err := fmt.Fprintln(w, line); err != nil {
 			return err
 		}
 	}
+	if err := writeReviewerComments(w, r); err != nil {
+		return err
+	}
+	_, err := fmt.Fprintf(w, "\n**Next action:** %s\n", nextAction(r))
+	return err
+}
 
+// writeReviewerComments renders comment bodies in full mode, or the unresolved
+// count plus a drill-in command in concise mode.
+func writeReviewerComments(w io.Writer, r ReviewerView) error {
+	if len(r.UnresolvedComments) > 0 {
+		return writeFullComments(w, r.UnresolvedComments)
+	}
+	if r.UnresolvedCount > 0 {
+		return writeConciseComments(w, r.UnresolvedCount, r.DrillInCmd)
+	}
 	return nil
 }
 
-func nextActionAgent(r ReviewerView) string {
+func writeFullComments(w io.Writer, comments []CommentView) error {
+	if _, err := fmt.Fprintf(w, "\n**Unresolved comments (%d):**\n", len(comments)); err != nil {
+		return err
+	}
+	for _, c := range comments {
+		if _, err := fmt.Fprintf(w, "- %s\n", c.Body); err != nil {
+			return err
+		}
+		if c.URL != "" {
+			if _, err := fmt.Fprintf(w, "  <%s>\n", c.URL); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func writeConciseComments(w io.Writer, count int, drillIn string) error {
+	if _, err := fmt.Fprintf(w, "- **Unresolved:** %d thread(s)\n", count); err != nil {
+		return err
+	}
+	if drillIn == "" {
+		return nil
+	}
+	_, err := fmt.Fprintf(w, "\nRead the unresolved comments:\n```sh\n%s\n```\n", drillIn)
+	return err
+}
+
+func nextAction(r ReviewerView) string {
 	switch r.Phase {
 	case reviewer.PhaseGoalMet:
 		return "Goal met — nothing to do for this reviewer."
@@ -295,18 +223,14 @@ func nextActionAgent(r ReviewerView) string {
 	case reviewer.PhaseActive:
 		if r.CanRerequest {
 			return fmt.Sprintf(
-				"Ready to (re)request review.\n\n"+
-					"Run: `%s request --reviewer %s`\n\n"+
-					"After requesting, wait using a background shell rather than blocking, for example:\n"+
-					"```sh\nsleep 60 && %s check\n```\n"+
-					"Then re-check the status.",
+				"(re)request review: run `%s request --reviewer %s`, "+
+					"then wait without blocking (e.g. `sleep 60 && %s check`) and re-check.",
 				programName, formatIdentity(r.Identity), programName,
 			)
 		}
 
 		return fmt.Sprintf(
-			"Re-request is blocked: %s\n\n"+
-				"Address the unresolved comments above and push a new commit before re-requesting.",
+			"Re-request blocked: %s. Address the unresolved comments and push a new commit before re-requesting.",
 			r.BlockReason,
 		)
 	}
@@ -315,7 +239,11 @@ func nextActionAgent(r ReviewerView) string {
 	return ""
 }
 
-func renderLoopDoneAgent(w io.Writer, v LoopView) error {
+func writeLoopDone(w io.Writer, v LoopView) error {
+	if !v.Done {
+		return nil
+	}
+
 	var exhausted []string
 	for _, r := range v.Reviewers {
 		if r.Phase == reviewer.PhaseExhausted {
@@ -323,186 +251,18 @@ func renderLoopDoneAgent(w io.Writer, v LoopView) error {
 		}
 	}
 
-	var sb strings.Builder
-	sb.WriteString("---\n## Loop complete\n\n")
-
 	if len(exhausted) > 0 {
-		fmt.Fprintf(
-			&sb,
-			"**Warning:** the following reviewers exhausted their rallies without meeting the goal: %s.\n",
+		_, err := fmt.Fprintf(
+			w,
+			"\n**Loop complete.** Warning: these reviewers exhausted their rallies without meeting the goal: %s.\n",
 			strings.Join(exhausted, ", "),
 		)
-	} else {
-		sb.WriteString("All reviewers reached their goal.\n")
+		return err
 	}
 
-	_, err := fmt.Fprint(w, sb.String())
-
+	_, err := fmt.Fprintln(w, "\n**Loop complete.** All reviewers reached their goal.")
 	return err
 }
-
-// ── CheckResult rendering ────────────────────────────────────────────────────
-
-// RenderCheckResult writes a [core.CheckResult] to w in the chosen format.
-// It always emits:
-//   - a "status: satisfied|blocked" line
-//   - the Blockers section (when non-empty)
-//   - the Advisories section (always, even when satisfied)
-//   - the reviewer-loop subsection (when loopView is non-nil), rendered with the
-//     same per-reviewer detail as the standalone loop view
-func RenderCheckResult(w io.Writer, r core.CheckResult, loopView *LoopView, f Format) error {
-	switch f {
-	case FormatAgent:
-		return renderCheckAgent(w, r, loopView)
-	case FormatHuman:
-		return renderCheckHuman(w, r, loopView)
-	default:
-		return fmt.Errorf("unsupported format %q", f)
-	}
-}
-
-// checkRenderStyles holds the format strings that differ between human and agent output.
-type checkRenderStyles struct {
-	blockersHeader     string
-	blockerItem        string // args: kind, title
-	blockerDetail      string // args: detail
-	blockerAction      string // args: action
-	blockerDrillIn     string // args: drillIn
-	advisoriesHeader   string
-	advisoryItem       string // args: kind, title
-	advisoryDetail     string // args: detail
-	reviewerLoopHeader string
-	renderLoop         func(io.Writer, LoopView) error
-}
-
-func humanCheckStyles() checkRenderStyles {
-	return checkRenderStyles{
-		blockersHeader:     "\nBlockers:",
-		blockerItem:        "  [%s] %s\n",
-		blockerDetail:      "    %s\n",
-		blockerAction:      "    Action: %s\n",
-		blockerDrillIn:     "    Detail: %s\n",
-		advisoriesHeader:   "\nAdvisories (require human action):",
-		advisoryItem:       "  [%s] %s\n",
-		advisoryDetail:     "    %s\n",
-		reviewerLoopHeader: "\nReviewer loop:",
-		renderLoop:         renderHuman,
-	}
-}
-
-func agentCheckStyles() checkRenderStyles {
-	return checkRenderStyles{
-		blockersHeader:     "\n## Blockers",
-		blockerItem:        "\n### [%s] %s\n",
-		blockerDetail:      "- **Detail:** %s\n",
-		blockerAction:      "- **Action:** %s\n",
-		blockerDrillIn:     "- **Drill in:** `%s`\n",
-		advisoriesHeader:   "\n## Advisories (require human action)",
-		advisoryItem:       "\n### [%s] %s\n",
-		advisoryDetail:     "- **Detail:** %s\n",
-		reviewerLoopHeader: "\n## Reviewer loop",
-		renderLoop:         renderAgent,
-	}
-}
-
-func renderCheckHuman(w io.Writer, r core.CheckResult, loopView *LoopView) error {
-	return renderCheck(w, r, loopView, humanCheckStyles())
-}
-
-func renderCheckAgent(w io.Writer, r core.CheckResult, loopView *LoopView) error {
-	return renderCheck(w, r, loopView, agentCheckStyles())
-}
-
-func renderCheck(w io.Writer, r core.CheckResult, loopView *LoopView, s checkRenderStyles) error {
-	statusStr := "satisfied"
-	if !r.Satisfied {
-		statusStr = "blocked"
-	}
-	if _, err := fmt.Fprintf(w, "status: %s\n", statusStr); err != nil {
-		return err
-	}
-	if err := writeBlockersSection(w, r.Blockers, s); err != nil {
-		return err
-	}
-	if err := writeAdvisoriesSection(w, r.Advisories, s); err != nil {
-		return err
-	}
-	if loopView != nil {
-		if _, err := fmt.Fprintln(w, s.reviewerLoopHeader); err != nil {
-			return err
-		}
-		if err := s.renderLoop(w, *loopView); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func writeBlockersSection(w io.Writer, blockers []core.Condition, s checkRenderStyles) error {
-	if len(blockers) == 0 {
-		return nil
-	}
-	if _, err := fmt.Fprintln(w, s.blockersHeader); err != nil {
-		return err
-	}
-	for _, c := range blockers {
-		if err := writeBlocker(w, c, s); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func writeAdvisoriesSection(w io.Writer, advisories []core.Condition, s checkRenderStyles) error {
-	if len(advisories) == 0 {
-		return nil
-	}
-	if _, err := fmt.Fprintln(w, s.advisoriesHeader); err != nil {
-		return err
-	}
-	for _, c := range advisories {
-		if err := writeAdvisory(w, c, s); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func writeBlocker(w io.Writer, c core.Condition, s checkRenderStyles) error {
-	if _, err := fmt.Fprintf(w, s.blockerItem, c.Kind, c.Title); err != nil {
-		return err
-	}
-	if c.Detail != "" {
-		if _, err := fmt.Fprintf(w, s.blockerDetail, c.Detail); err != nil {
-			return err
-		}
-	}
-	if c.SuggestedAction != "" {
-		if _, err := fmt.Fprintf(w, s.blockerAction, c.SuggestedAction); err != nil {
-			return err
-		}
-	}
-	if c.DrillInCmd != "" {
-		if _, err := fmt.Fprintf(w, s.blockerDrillIn, c.DrillInCmd); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func writeAdvisory(w io.Writer, c core.Condition, s checkRenderStyles) error {
-	if _, err := fmt.Fprintf(w, s.advisoryItem, c.Kind, c.Title); err != nil {
-		return err
-	}
-	if c.Detail != "" {
-		if _, err := fmt.Fprintf(w, s.advisoryDetail, c.Detail); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-// ── Helpers ──────────────────────────────────────────────────────────────────
 
 // formatIdentity returns the canonical "type:name" string for a reviewer identity.
 func formatIdentity(id reviewer.Identity) string {
