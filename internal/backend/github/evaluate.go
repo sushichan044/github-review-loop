@@ -120,7 +120,7 @@ func NewGitHubBackendWithClient(client *Client) *GitHubBackend {
 //
 // The returned CheckResult does NOT have Finalize called; callers must call
 // CheckResult.Finalize after optionally attaching ReviewerLoop.
-func (b *GitHubBackend) BundledEvaluate(_ context.Context, pr backend.PRCoords) (core.CheckResult, error) {
+func (b *GitHubBackend) BundledEvaluate(ctx context.Context, pr backend.PRCoords) (core.CheckResult, error) {
 	vars := map[string]any{
 		gqlVarOwner:  graphql.String(pr.Owner),
 		gqlVarRepo:   graphql.String(pr.Repo),
@@ -129,7 +129,7 @@ func (b *GitHubBackend) BundledEvaluate(_ context.Context, pr backend.PRCoords) 
 
 	var q prMergeabilityQueryStruct
 	for attempt := 0; ; attempt++ {
-		if err := b.client.gql.Query("PRMergeability", &q, vars); err != nil {
+		if err := b.client.gql.QueryWithContext(ctx, "PRMergeability", &q, vars); err != nil {
 			return core.CheckResult{}, fmt.Errorf("mergeability query failed: %w", err)
 		}
 

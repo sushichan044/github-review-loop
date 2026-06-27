@@ -179,21 +179,45 @@ func writeReviewerComments(w io.Writer, r ReviewerView) error {
 	return nil
 }
 
+// writeFullComments renders each unresolved comment body as an inert fenced
+// code block. Reviewer-authored text is untrusted input: this output is fed to
+// an AI agent, so rendering a body as raw Markdown would let a comment inject
+// headings or imperative instructions the agent might follow. A code fence
+// neutralizes the body — the Author/URL metadata stays as plain Markdown.
 func writeFullComments(w io.Writer, comments []CommentView) error {
 	if _, err := fmt.Fprintf(w, "\n**Unresolved comments (%d):**\n", len(comments)); err != nil {
 		return err
 	}
 	for _, c := range comments {
-		if _, err := fmt.Fprintf(w, "- %s\n", c.Body); err != nil {
-			return err
-		}
+		meta := c.Author
 		if c.URL != "" {
-			if _, err := fmt.Fprintf(w, "  <%s>\n", c.URL); err != nil {
-				return err
-			}
+			meta = fmt.Sprintf("%s — <%s>", meta, c.URL)
+		}
+		fence := codeFenceFor(c.Body)
+		if _, err := fmt.Fprintf(w, "\n- %s\n\n%s\n%s\n%s\n", meta, fence, c.Body, fence); err != nil {
+			return err
 		}
 	}
 	return nil
+}
+
+// codeFenceFor returns a backtick fence longer than the longest run of
+// backticks in body, so an embedded fence in the body cannot close ours early.
+// The minimum length is 3.
+func codeFenceFor(body string) string {
+	longest, run := 0, 0
+	for _, r := range body {
+		if r == '`' {
+			run++
+			if run > longest {
+				longest = run
+			}
+		} else {
+			run = 0
+		}
+	}
+	const minFenceLen = 3 // a Markdown code fence is at least three backticks
+	return strings.Repeat("`", max(longest+1, minFenceLen))
 }
 
 func writeConciseComments(w io.Writer, count int, drillIn string) error {

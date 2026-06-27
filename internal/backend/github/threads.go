@@ -126,7 +126,7 @@ func fetchReviewThreads(ctx context.Context, gql GraphQLQuerier, pr PR) ([]revie
 			"cursor":     cursor,
 		}
 
-		if err := gql.Query("PRReviewThreads", &q, vars); err != nil {
+		if err := gql.QueryWithContext(ctx, "PRReviewThreads", &q, vars); err != nil {
 			return nil, fmt.Errorf("review threads query failed: %w", err)
 		}
 

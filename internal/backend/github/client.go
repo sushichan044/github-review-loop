@@ -3,13 +3,18 @@
 package github
 
 import (
+	"context"
+
 	"github.com/cli/go-gh/v2/pkg/api"
 )
 
 // GraphQLQuerier is a testable seam around the GraphQL client.
 // The real implementation is [*api.GraphQLClient]; tests pass a fake.
+//
+// QueryWithContext (not Query) is used so callers can propagate cancellation
+// and deadlines down to the network layer.
 type GraphQLQuerier interface {
-	Query(name string, q any, variables map[string]any) error
+	QueryWithContext(ctx context.Context, name string, q any, variables map[string]any) error
 }
 
 // Client holds a GraphQL querier used for all GitHub data fetches.

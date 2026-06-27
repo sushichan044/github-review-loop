@@ -19,7 +19,7 @@ type fakeEvalQuerier struct {
 	err    error
 }
 
-func (f *fakeEvalQuerier) Query(_ string, q any, _ map[string]any) error {
+func (f *fakeEvalQuerier) QueryWithContext(_ context.Context, _ string, q any, _ map[string]any) error {
 	if f.err != nil {
 		return f.err
 	}

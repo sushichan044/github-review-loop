@@ -32,7 +32,7 @@ func (f *fakeQuerier) on(name string, fn func(q any) error) {
 	f.handlers[name] = fn
 }
 
-func (f *fakeQuerier) Query(name string, q any, _ map[string]any) error {
+func (f *fakeQuerier) QueryWithContext(_ context.Context, name string, q any, _ map[string]any) error {
 	fn, ok := f.handlers[name]
 	if !ok {
 		return fmt.Errorf("fakeQuerier: unexpected query %q", name)

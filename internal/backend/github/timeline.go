@@ -166,7 +166,7 @@ func fetchTimeline(ctx context.Context, gql GraphQLQuerier, pr PR) (timelineResu
 			"skip":       graphql.Int(int32(skip)),
 		}
 
-		if err := gql.Query("PRTimeline", &q, vars); err != nil {
+		if err := gql.QueryWithContext(ctx, "PRTimeline", &q, vars); err != nil {
 			return timelineResult{}, fmt.Errorf("timeline query failed (skip=%d): %w", skip, err)
 		}
 
