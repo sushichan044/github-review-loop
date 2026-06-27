@@ -106,9 +106,12 @@ type prTimelineNode struct {
 		Author struct {
 			Login string
 		}
-		State          string
-		SubmittedAt    graphqlTime
-		Body           string
+		State       string
+		SubmittedAt graphqlTime
+		Body        string
+		// fullDatabaseId (BigInt, returned as a string), NOT databaseId: the REST
+		// review id already exceeds GraphQL's 32-bit Int (e.g. 4584388062 > 2^31-1),
+		// so databaseId would overflow. The string is the numeric REST id.
 		FullDatabaseID string `graphql:"fullDatabaseId"`
 		Comments       struct {
 			TotalCount int
@@ -147,21 +150,25 @@ type prTimelineQueryStruct struct {
 		PullRequest struct {
 			HeadRefOid    string `graphql:"headRefOid"`
 			TimelineItems struct {
-				TotalCount int32
-				Nodes      []prTimelineNode
-			} `graphql:"timelineItems(first: 100, skip: $skip)"`
+				Nodes    []prTimelineNode
+				PageInfo struct {
+					EndCursor   graphql.String
+					HasNextPage bool
+				}
+			} `graphql:"timelineItems(first: 100, after: $cursor)"`
 		} `graphql:"pullRequest(number: $number)"`
 	} `graphql:"repository(owner: $owner, name: $repo)"`
 }
 
-// fetchTimeline retrieves all timeline nodes for the given PR via skip-based
-// pagination. It also returns the head commit OID from the first page.
+// fetchTimeline retrieves all timeline nodes for the given PR using cursor-based
+// pagination (the documented Relay connection contract). It also returns the
+// head commit OID from the first page.
 func fetchTimeline(ctx context.Context, gql GraphQLQuerier, pr PR) (timelineResult, error) {
-	const pageSize = 100
-
 	var result timelineResult
+	var cursor *graphql.String
+	first := true
 
-	for skip := 0; ; skip += pageSize {
+	for {
 		if err := ctx.Err(); err != nil {
 			return timelineResult{}, err
 		}
@@ -171,30 +178,28 @@ func fetchTimeline(ctx context.Context, gql GraphQLQuerier, pr PR) (timelineResu
 			gqlVarOwner:  graphql.String(pr.Owner),
 			gqlVarRepo:   graphql.String(pr.Repo),
 			gqlVarNumber: graphql.Int(int32(pr.Number)), //nolint:gosec // PR numbers won't overflow int32
-			"skip":       graphql.Int(int32(skip)),
+			"cursor":     cursor,
 		}
 
 		if err := gql.QueryWithContext(ctx, "PRTimeline", &q, vars); err != nil {
-			return timelineResult{}, fmt.Errorf("timeline query failed (skip=%d): %w", skip, err)
+			return timelineResult{}, fmt.Errorf("timeline query failed: %w", err)
 		}
 
-		if skip == 0 {
+		if first {
 			result.HeadRefOID = q.Repository.PullRequest.HeadRefOid
+			first = false
 		}
 
 		items := q.Repository.PullRequest.TimelineItems
 		for _, n := range items.Nodes {
-			node := convertTimelineNode(n)
-			result.Nodes = append(result.Nodes, node)
+			result.Nodes = append(result.Nodes, convertTimelineNode(n))
 		}
 
-		// Stop when we've fetched all items.
-		// Note: skip-based pagination can skip or duplicate items if the PR's timeline
-		// TotalCount changes between page fetches on a live PR; acceptable for the
-		// review-loop's controlled context.
-		if int32(skip)+pageSize >= items.TotalCount {
+		if !items.PageInfo.HasNextPage {
 			break
 		}
+		next := items.PageInfo.EndCursor
+		cursor = &next
 	}
 
 	return result, nil

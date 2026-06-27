@@ -113,9 +113,8 @@ func injectTimeline(
 		return
 	}
 	query.Repository.PullRequest.HeadRefOid = headOID
-
-	totalCount := len(reviews) + len(reqEvents) + len(comments)
-	query.Repository.PullRequest.TimelineItems.TotalCount = int32(totalCount)
+	// Single-page fake: PageInfo.HasNextPage stays false so fetchTimeline stops
+	// after one query.
 
 	// nodeType aliases the shared named type so the injection code below
 	// compiles unchanged. Now that the node shape is a named type in timeline.go,
