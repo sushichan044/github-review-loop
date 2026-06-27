@@ -220,22 +220,45 @@ func nextAction(r ReviewerView) string {
 		)
 
 	case reviewer.PhaseActive:
+		// Unresolved conversations must be addressed before any re-request: a
+		// re-request does not advance the goal while the reviewer's existing
+		// comments are still open.
+		if n := r.unresolvedCount(); n > 0 {
+			return fmt.Sprintf(
+				"Resolve the %d unresolved conversation(s) first (read them above): address each "+
+					"with a fix or reply and mark it resolved, then push. Re-request only once no "+
+					"unresolved conversations remain.",
+				n,
+			)
+		}
+
 		if r.CanRerequest {
 			return fmt.Sprintf(
-				"(re)request review: run `%s request --reviewer %s`, "+
-					"then wait without blocking (e.g. `sleep 60 && %s check`) and re-check.",
+				"(re)request review: run `%s request --reviewer %s`. Then poll in a BACKGROUND "+
+					"shell so the foreground is not blocked — run `sleep 60 && %s check` as a "+
+					"background job (do not run it in the foreground) — and re-check when it returns.",
 				programName, formatIdentity(r.Identity), programName,
 			)
 		}
 
 		return fmt.Sprintf(
-			"Re-request blocked: %s. Address the unresolved comments and push a new commit before re-requesting.",
+			"Re-request blocked: %s. Push a new commit if changes are needed, or wait if a "+
+				"request is already pending.",
 			r.BlockReason,
 		)
 	}
 
 	// unreachable: all Phase values handled above
 	return ""
+}
+
+// unresolvedCount returns the number of unresolved threads for the reviewer,
+// covering both concise mode (UnresolvedCount) and full mode (UnresolvedComments).
+func (r ReviewerView) unresolvedCount() int {
+	if r.UnresolvedCount > 0 {
+		return r.UnresolvedCount
+	}
+	return len(r.UnresolvedComments)
 }
 
 func writeLoopDone(w io.Writer, v LoopView) error {

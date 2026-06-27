@@ -87,7 +87,7 @@ func TestRender_Active_Blocked(t *testing.T) {
 
 	assert.Contains(t, out, "active", "phase should appear")
 	assert.Contains(t, out, blockReason, "block reason should appear")
-	assert.Contains(t, out, "push", "next-action: instruct to push a new commit")
+	assert.Contains(t, out, "Push a new commit", "next-action: instruct to push a new commit")
 }
 
 func TestRender_FullMode_ShowsCommentBodies(t *testing.T) {
@@ -117,6 +117,34 @@ func TestRender_ConciseMode_ShowsCountAndDrillIn_NotBodies(t *testing.T) {
 
 	assert.Contains(t, out, "5 thread(s)", "concise mode shows the unresolved count")
 	assert.Contains(t, out, drillIn, "concise mode shows the drill-in command")
+}
+
+func TestRender_Active_WithUnresolved_NextActionIsResolveNotRerequest(t *testing.T) {
+	t.Parallel()
+
+	out := renderString(t, output.LoopView{Reviewers: []output.ReviewerView{{
+		Identity: aliceIdentity(), Goal: reviewer.GoalAllConversationsResolved,
+		Phase: reviewer.PhaseActive, RallyCount: 1, MaxRallies: 5, CanRerequest: true,
+		UnresolvedCount: 2, DrillInCmd: "gh api graphql ...",
+	}}})
+
+	// With unresolved conversations, the next action must be to resolve them —
+	// NOT to re-request (re-requesting does not advance the goal while open).
+	assert.Contains(t, out, "Resolve the 2 unresolved")
+	assert.NotContains(t, out, "(re)request review", "must not suggest re-request while conversations are open")
+}
+
+func TestRender_Active_CanRerequest_PollsInBackground(t *testing.T) {
+	t.Parallel()
+
+	out := renderString(t, output.LoopView{Reviewers: []output.ReviewerView{{
+		Identity: aliceIdentity(), Goal: reviewer.GoalApproved,
+		Phase: reviewer.PhaseActive, RallyCount: 1, MaxRallies: 3, CanRerequest: true,
+	}}})
+
+	// The poll-wait must be explicitly a background job (a foreground sleep blocks the agent).
+	assert.Contains(t, out, "BACKGROUND")
+	assert.Contains(t, out, "background job")
 }
 
 func TestRender_DoneLoop(t *testing.T) {
