@@ -28,9 +28,9 @@ type CommentView struct {
 //
 // Two rendering modes are supported:
 //   - Full mode (view --condition reviewers): populate UnresolvedComments with comment
-//     bodies. UnresolvedCount and DrillInCmd are ignored.
-//   - Concise mode (check): set UnresolvedCount and DrillInCmd; leave UnresolvedComments
-//     empty. The renderer shows only the count + a drill-in command.
+//     bodies; they are rendered inline (see [Render]).
+//   - Concise mode (check): set UnresolvedCount; leave UnresolvedComments empty. The
+//     check task list shows the count per reviewer (see [RenderCheckResult]).
 type ReviewerView struct {
 	Identity     reviewer.Identity
 	Goal         reviewer.Goal
@@ -82,34 +82,274 @@ func writeTarget(w io.Writer, target string) error {
 	return err
 }
 
-// RenderCheckResult writes a [core.CheckResult] as Markdown. It always emits a
-// machine-readable "status: satisfied|blocked" line (the loop stop signal), then
-// the target line, the Blockers, Advisories, and reviewer-loop sections when
-// present.
+// taskItem is one line of the check task list: a checkbox state and a label.
+type taskItem struct {
+	done  bool
+	label string
+}
+
+// nextStepT is the single highest-priority action for a blocked check.
+type nextStepT struct {
+	action  string
+	command string
+}
+
+// RenderCheckResult writes a [core.CheckResult] as a lean task list. The first
+// line is the machine-readable "status: satisfied|blocked …" header (the loop
+// stop signal mirrors the exit code); the body is one checkbox per merge
+// condition and reviewer, trailing "~" lines for human-only advisories, and a
+// single "Next →" step for the highest-priority outstanding item. Depth (failing
+// check names, comment bodies, ruleset rules) lives in `view`, not here.
 func RenderCheckResult(w io.Writer, r core.CheckResult, loopView *LoopView, target string) error {
 	status := "satisfied"
 	if !r.Satisfied {
 		status = "blocked"
 	}
-	if _, err := fmt.Fprintf(w, "status: %s\n", status); err != nil {
-		return err
+
+	head := "status: " + status
+	if target != "" {
+		head += " · " + target
 	}
-	if err := writeTarget(w, target); err != nil {
-		return err
+	lines := []string{head, ""}
+
+	for _, it := range checkTaskItems(r, loopView) {
+		box := " "
+		if it.done {
+			box = "x"
+		}
+		lines = append(lines, fmt.Sprintf("- [%s] %s", box, it.label))
 	}
 
-	if err := writeConditionsSection(w, "Blockers", r.Blockers); err != nil {
-		return err
+	for _, a := range advisoryLines(r, loopView) {
+		lines = append(lines, "~ "+a)
 	}
-	if err := writeConditionsSection(w, "Advisories (require human action)", r.Advisories); err != nil {
-		return err
+
+	if step := nextStep(r, loopView); step != nil {
+		lines = append(lines, "", "Next → "+step.action)
+		if step.command != "" {
+			lines = append(lines, "       "+step.command)
+		}
 	}
-	if loopView != nil {
-		if err := writeReviewerLoop(w, *loopView); err != nil {
+
+	for _, ln := range lines {
+		if _, err := fmt.Fprintln(w, ln); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+// checkTaskItems returns the fixed-order task list: the merge dimensions
+// (conflicts, base, required checks, and merge-eligibility only while pending)
+// followed by one item per reviewer. A dimension is done when no blocker of its
+// kind is present.
+func checkTaskItems(r core.CheckResult, lv *LoopView) []taskItem {
+	items := []taskItem{
+		{done: !hasBlockerKind(r.Blockers, core.ConditionConflict), label: "conflicts"},
+		{done: !hasBlockerKind(r.Blockers, core.ConditionBehindBase), label: "base up-to-date"},
+		requiredChecksItem(r.Blockers),
+	}
+	if hasBlockerKind(r.Blockers, core.ConditionMergeEligibilityPending) {
+		items = append(items, taskItem{label: "merge eligibility — still computing"})
+	}
+	if lv != nil {
+		for _, rv := range lv.Reviewers {
+			items = append(items, reviewerTaskItem(rv))
+		}
+	}
+	return items
+}
+
+// requiredChecksItem collapses the failing/pending required-check blockers into a
+// single line, naming the checks when the attribution provided them.
+func requiredChecksItem(blockers []core.Condition) taskItem {
+	var parts []string
+	if hasBlockerKind(blockers, core.ConditionCheckFailing) {
+		parts = append(parts, labelWithDetail(blockerDetail(blockers, core.ConditionCheckFailing), "failing"))
+	}
+	if hasBlockerKind(blockers, core.ConditionCheckPending) {
+		parts = append(parts, labelWithDetail(blockerDetail(blockers, core.ConditionCheckPending), "pending"))
+	}
+	if len(parts) == 0 {
+		return taskItem{done: true, label: "required checks"}
+	}
+	return taskItem{label: "required checks — " + strings.Join(parts, ", ")}
+}
+
+// labelWithDetail renders "<detail> <suffix>" when detail is present, else suffix.
+func labelWithDetail(detail, suffix string) string {
+	if detail == "" {
+		return suffix
+	}
+	return detail + " " + suffix
+}
+
+// reviewerTaskItem maps one reviewer's state to a task line. Terminal phases
+// (goal-met, exhausted) are done; an active reviewer is outstanding and labeled
+// by the reason it is still blocking.
+func reviewerTaskItem(rv ReviewerView) taskItem {
+	id := formatIdentity(rv.Identity)
+	switch rv.Phase {
+	case reviewer.PhaseGoalMet:
+		return taskItem{done: true, label: id + " — goal met"}
+
+	case reviewer.PhaseExhausted:
+		return taskItem{done: true, label: fmt.Sprintf("%s — exhausted (%d/%d) ⚠", id, rv.RallyCount, rv.MaxRallies)}
+
+	case reviewer.PhaseActive:
+		rally := fmt.Sprintf("(%d/%d)", rv.RallyCount, rv.MaxRallies)
+		switch {
+		case rv.ChangesRequested:
+			return taskItem{label: fmt.Sprintf("%s — changes requested %s", id, rally)}
+		case rv.unresolvedCount() > 0:
+			return taskItem{label: fmt.Sprintf("%s — %d unresolved %s", id, rv.unresolvedCount(), rally)}
+		case rv.CanRerequest:
+			return taskItem{label: fmt.Sprintf("%s — awaiting review %s", id, rally)}
+		default:
+			return taskItem{label: fmt.Sprintf("%s — awaiting response %s", id, rally)}
+		}
+	}
+
+	// unreachable: all Phase values handled above
+	return taskItem{label: id}
+}
+
+// advisoryLines returns the trailing "~" notes: human-only advisories, an
+// exhausted-reviewer warning, and a single review-notes pointer when any
+// reviewer left a review body.
+func advisoryLines(r core.CheckResult, lv *LoopView) []string {
+	var lines []string
+	for _, a := range r.Advisories {
+		lines = append(lines, advisoryLabel(a))
+	}
+	if lv == nil {
+		return lines
+	}
+	for _, rv := range lv.Reviewers {
+		if rv.Phase == reviewer.PhaseExhausted {
+			lines = append(lines, fmt.Sprintf(
+				"%s exhausted %d/%d rallies without meeting goal — stop the loop or raise max-rallies",
+				formatIdentity(rv.Identity), rv.RallyCount, rv.MaxRallies))
+		}
+	}
+	for _, rv := range lv.Reviewers {
+		if rv.ReviewBodyPresent {
+			lines = append(lines, "review notes present — "+programName+" view --condition reviewers")
+			break
+		}
+	}
+	return lines
+}
+
+// advisoryLabel renders a condition as a terse one-line advisory note. Only the
+// known advisory kinds get a custom label; any other kind falls back to Title.
+func advisoryLabel(c core.Condition) string {
+	//nolint:exhaustive // partial by design: unlisted kinds use the Title fallback.
+	switch c.Kind {
+	case core.ConditionApprovalRequired:
+		return "approval required (human)"
+	case core.ConditionChangesRequested:
+		return "changes requested via reviewDecision (human)"
+	case core.ConditionResidualRuleset:
+		return "ruleset block — " + programName + " view --condition rules (human)"
+	case core.ConditionCheckTruncated:
+		return "check list truncated at 100 — " + programName + " view --condition checks"
+	default:
+		return c.Title
+	}
+}
+
+// nextStep returns the single highest-priority action for a blocked check, or
+// nil when nothing is outstanding. Dimensions are tried in fix-first order, then
+// reviewers; only the top item is expanded so the agent has one clear move.
+func nextStep(r core.CheckResult, lv *LoopView) *nextStepT {
+	dimSteps := []struct {
+		kind    core.ConditionKind
+		action  string
+		command string
+	}{
+		{core.ConditionConflict, "resolve merge conflicts (merge or rebase the base branch), commit, push", ""},
+		{core.ConditionBehindBase, "rebase onto the base branch and push", ""},
+		{
+			core.ConditionCheckFailing,
+			"fix the failing required checks, then push",
+			programName + " view --condition checks",
+		},
+		{core.ConditionCheckPending, "wait for required checks to finish, then re-run check", ""},
+		{
+			core.ConditionMergeEligibilityPending,
+			"wait ~30s for GitHub to compute the merge state, then re-run check",
+			"",
+		},
+	}
+	for _, s := range dimSteps {
+		if hasBlockerKind(r.Blockers, s.kind) {
+			return &nextStepT{action: s.action, command: s.command}
+		}
+	}
+
+	if lv == nil {
+		return nil
+	}
+	for _, rv := range lv.Reviewers {
+		if rv.Phase != reviewer.PhaseActive {
+			continue
+		}
+		return reviewerNextStep(rv)
+	}
+	return nil
+}
+
+// reviewerNextStep returns the action for an active reviewer that is the top
+// outstanding item.
+func reviewerNextStep(rv ReviewerView) *nextStepT {
+	id := formatIdentity(rv.Identity)
+	switch {
+	case rv.ChangesRequested:
+		return &nextStepT{
+			action: fmt.Sprintf(
+				"address %s's requested changes (read the body), push, then re-request — or escalate if you cannot",
+				id,
+			),
+			command: programName + " view --condition reviewers",
+		}
+	case rv.unresolvedCount() > 0:
+		return &nextStepT{
+			action:  fmt.Sprintf("resolve %s's %d unresolved thread(s), then push", id, rv.unresolvedCount()),
+			command: programName + " view --condition reviewers",
+		}
+	case rv.CanRerequest:
+		return &nextStepT{
+			action: fmt.Sprintf(
+				"re-request %s, then poll in a background shell (sleep 60 && %s check)",
+				id,
+				programName,
+			),
+			command: programName + " request --reviewer " + id,
+		}
+	default:
+		return &nextStepT{action: fmt.Sprintf("%s: %s", id, rv.BlockReason)}
+	}
+}
+
+// hasBlockerKind reports whether any blocker has the given kind.
+func hasBlockerKind(blockers []core.Condition, kind core.ConditionKind) bool {
+	for _, b := range blockers {
+		if b.Kind == kind {
+			return true
+		}
+	}
+	return false
+}
+
+// blockerDetail returns the Detail of the first blocker with the given kind.
+func blockerDetail(blockers []core.Condition, kind core.ConditionKind) string {
+	for _, b := range blockers {
+		if b.Kind == kind {
+			return b.Detail
+		}
+	}
+	return ""
 }
 
 // RenderDimensionView renders a filtered set of conditions for a single dimension

@@ -248,7 +248,7 @@ func TestCheck_Advisories_AlwaysShown_EvenWhenSatisfied(t *testing.T) {
 	require.NoError(t, err, "advisories alone should not block")
 	out := buf.String()
 	assert.Contains(t, out, "status: satisfied")
-	assert.Contains(t, out, "approval-required", "advisory must appear even when satisfied")
+	assert.Contains(t, out, "~ approval required (human)", "advisory must appear even when satisfied")
 }
 
 // ---------------------------------------------------------------------------

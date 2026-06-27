@@ -283,22 +283,35 @@ func TestRenderCheckResult_StatusLine(t *testing.T) {
 	assert.Contains(t, renderCheckString(t, blocked, nil), "status: blocked")
 }
 
-func TestRenderCheckResult_Blockers_Shown(t *testing.T) {
+func TestRenderCheckResult_Satisfied_AllDimensionsChecked(t *testing.T) {
+	t.Parallel()
+
+	// With no blockers, every dimension renders as a checked task item.
+	out := renderCheckString(t, core.CheckResult{Satisfied: true}, nil)
+
+	assert.Contains(t, out, "- [x] conflicts")
+	assert.Contains(t, out, "- [x] base up-to-date")
+	assert.Contains(t, out, "- [x] required checks")
+}
+
+func TestRenderCheckResult_Blockers_AsTaskItems(t *testing.T) {
 	t.Parallel()
 
 	out := renderCheckString(t, core.CheckResult{Blockers: []core.Condition{{
 		Kind: core.ConditionCheckFailing, Severity: core.SeverityBlocker,
 		Title: "Required CI check failing", Detail: "build / lint",
-		SuggestedAction: "Fix lint errors and push.", DrillInCmd: "gh pr checks 42",
 	}}}, nil)
 
-	assert.Contains(t, out, "## Blockers")
-	assert.Contains(t, out, "check-failing")
-	assert.Contains(t, out, "build / lint")
-	assert.Contains(t, out, "gh pr checks 42", "drill-in command should appear")
+	// A failing required check is an unchecked task item naming the check; the
+	// other dimensions stay checked. The Next line points at `view`.
+	assert.Contains(t, out, "- [ ] required checks — build / lint failing")
+	assert.Contains(t, out, "- [x] conflicts")
+	assert.Contains(t, out, "Next →")
+	assert.Contains(t, out, "view --condition checks")
+	assert.NotContains(t, out, "## Blockers", "the task list replaces the section format")
 }
 
-func TestRenderCheckResult_Advisories_ShownEvenWhenSatisfied(t *testing.T) {
+func TestRenderCheckResult_Advisories_AsTildeLines(t *testing.T) {
 	t.Parallel()
 
 	out := renderCheckString(t, core.CheckResult{
@@ -310,25 +323,64 @@ func TestRenderCheckResult_Advisories_ShownEvenWhenSatisfied(t *testing.T) {
 	}, nil)
 
 	assert.Contains(t, out, "status: satisfied")
-	assert.Contains(t, out, "## Advisories")
-	assert.Contains(t, out, "approval-required", "advisory appears even when satisfied")
+	assert.Contains(t, out, "~ approval required (human)", "advisory is a trailing ~ line, shown even when satisfied")
 }
 
-func TestRenderCheckResult_ReviewerLoop_DetailRendered(t *testing.T) {
+func TestRenderCheckResult_Reviewer_AsTaskItems(t *testing.T) {
 	t.Parallel()
 
 	loopView := &output.LoopView{
-		Done: true,
-		Reviewers: []output.ReviewerView{{
-			Identity: aliceIdentity(), Goal: reviewer.GoalApproved,
-			Phase: reviewer.PhaseGoalMet, RallyCount: 1, MaxRallies: 3, GoalMet: true,
-		}},
+		Reviewers: []output.ReviewerView{
+			{Identity: aliceIdentity(), Phase: reviewer.PhaseGoalMet, GoalMet: true},
+			{
+				Identity: reviewer.Identity{Type: reviewer.ReviewerTypeGitHubApp, Name: "coderabbitai"},
+				Phase:    reviewer.PhaseActive, RallyCount: 3, MaxRallies: 5, UnresolvedCount: 2,
+			},
+		},
 	}
+	out := renderCheckString(t, core.CheckResult{}, loopView)
+
+	assert.Contains(t, out, "- [x] user:alice — goal met")
+	assert.Contains(t, out, "- [ ] github-app:coderabbitai — 2 unresolved (3/5)")
+	assert.NotContains(t, out, "## Reviewer loop", "reviewers are task items, not a detailed section")
+}
+
+func TestRenderCheckResult_ReviewBody_TildeLine(t *testing.T) {
+	t.Parallel()
+
+	loopView := &output.LoopView{Reviewers: []output.ReviewerView{{
+		Identity: aliceIdentity(), Phase: reviewer.PhaseGoalMet, GoalMet: true,
+		LatestReviewState: reviewer.ReviewStateCommented, ReviewBodyPresent: true,
+	}}}
 	out := renderCheckString(t, core.CheckResult{Satisfied: true}, loopView)
 
-	assert.Contains(t, out, "## Reviewer loop", "reviewer loop header")
-	assert.Contains(t, out, "### user:alice", "per-reviewer detail is rendered, not just a header")
-	assert.Contains(t, out, "goal-met", "reviewer phase is rendered")
+	assert.Contains(t, out, "~ review notes present — mergeable-please view --condition reviewers")
+}
+
+func TestRenderCheckResult_ChangesRequested_NextEscalatesOrAddresses(t *testing.T) {
+	t.Parallel()
+
+	loopView := &output.LoopView{Reviewers: []output.ReviewerView{{
+		Identity: reviewer.Identity{Type: reviewer.ReviewerTypeGitHubApp, Name: "coderabbitai"},
+		Phase:    reviewer.PhaseActive, RallyCount: 1, MaxRallies: 5, ChangesRequested: true,
+	}}}
+	out := renderCheckString(t, core.CheckResult{}, loopView)
+
+	assert.Contains(t, out, "- [ ] github-app:coderabbitai — changes requested (1/5)")
+	assert.Contains(t, out, "Next →")
+	assert.Contains(t, out, "escalate")
+}
+
+func TestRenderCheckResult_Exhausted_DoneWithWarning(t *testing.T) {
+	t.Parallel()
+
+	loopView := &output.LoopView{Reviewers: []output.ReviewerView{{
+		Identity: aliceIdentity(), Phase: reviewer.PhaseExhausted, RallyCount: 5, MaxRallies: 5,
+	}}}
+	out := renderCheckString(t, core.CheckResult{Satisfied: true}, loopView)
+
+	assert.Contains(t, out, "- [x] user:alice — exhausted (5/5) ⚠", "exhausted is terminal/done with a warning marker")
+	assert.Contains(t, out, "~ user:alice exhausted", "exhausted reviewer is also called out as a ~ note")
 }
 
 // ── RenderDimensionView ───────────────────────────────────────────────────────
@@ -345,7 +397,7 @@ func TestRenderDimensionView_NoStatusLine(t *testing.T) {
 	assert.Contains(t, out, "check-failing")
 }
 
-func TestRenderCheckResult_TargetLine(t *testing.T) {
+func TestRenderCheckResult_TargetInHeader(t *testing.T) {
 	t.Parallel()
 
 	const target = "o/r#3 https://github.com/o/r/pull/3"
@@ -353,8 +405,8 @@ func TestRenderCheckResult_TargetLine(t *testing.T) {
 	require.NoError(t, output.RenderCheckResult(&sb, core.CheckResult{Satisfied: true}, nil, target))
 	out := sb.String()
 
-	assert.Contains(t, out, "status: satisfied", "status line is preserved")
-	assert.Contains(t, out, "target: "+target, "target line identifies the inspected PR")
+	// status and target share the first line: "status: satisfied · <target>".
+	assert.Contains(t, out, "status: satisfied · "+target, "header identifies status and the inspected PR")
 }
 
 func TestRenderDimensionView_TargetLine(t *testing.T) {

@@ -21,13 +21,20 @@ tells you the next action. **You** drive the loop by re-running it after each fi
 
 1. Run `mergeable-please check` (add the PR number or URL if you are not on the
    PR's branch, e.g. `mergeable-please check 42`).
-2. Look at the exit code and the `status:` line:
-   - exit `0` / `status: satisfied` → **stop**. The agent has done everything it
-     can; only human-gated advisories (if any) remain.
-   - exit `1` / `status: blocked` → there are blockers to resolve. Continue.
+2. `check` prints a task list. The first line is the header
+   `status: satisfied|blocked · owner/repo#n <url>`; then one checkbox per merge
+   condition and reviewer, trailing `~` lines for human-only notes, and a single
+   `Next →` step. Read the exit code and header:
+   - exit `0` / `status: satisfied` → **stop**. Every `- [x]` is done; only
+     human-gated `~` advisories (if any) remain.
+   - exit `1` / `status: blocked` → the `- [ ]` items are outstanding. The
+     `Next →` line is your single best next move (and the one command to run for
+     it); do that, then go back to step 1.
    - exit `2` → a usage/config/API error. Read the message and fix the invocation
      (do not loop on this).
-3. Resolve each **blocker** by its kind, then go back to step 1:
+3. For depth on any item, use `view` (`mergeable-please view --condition
+   checks|conflicts|rules|reviewers`) — `check` itself stays terse. Resolve each
+   outstanding `- [ ]` item by its kind, then go back to step 1:
    - `conflict` → merge or rebase the base branch, resolve conflicts, commit, push.
    - `behind-base` → the repo enforces up-to-date branches. Rebase onto the base
      and push (`git fetch && git rebase origin/<base> && git push --force-with-lease`).
@@ -36,29 +43,31 @@ tells you the next action. **You** drive the loop by re-running it after each fi
    - `check-pending` → required checks are still running. Wait, then re-run check.
    - `merge-eligibility-pending` → GitHub is still computing the merge state. Wait
      15–30 seconds and re-run check.
-   - reviewer-loop blockers → follow each reviewer's **Next action** verbatim.
-     In general: resolve any unresolved conversations first, then push, then
+   - reviewer `N unresolved` → resolve those conversations first
+     (`mergeable-please view --condition reviewers` shows them), push, then
      (re)request with `mergeable-please request --reviewer <type:name>`.
      Re-requests are blocked until the head advances, so always push your fix
      first. After (re)requesting, the reviewer needs time to respond — poll in a
      **background** shell (e.g. run `sleep 60 && mergeable-please check` as a
      background job, never in the foreground) so you are not blocked.
-   - **changes-requested** → a reviewer formally requested changes. Read the
-     review body and any threads, address the feedback, push, then re-request.
-     If you genuinely cannot address the request (e.g. it asks for a change you
-     should not make) and no new commit is possible, **stop and escalate to the
-     human** — the tool will keep reporting blocked, which is correct, and you
-     must not loop. The reviewer's Next action says exactly this when it applies.
-   - **review body** → a reviewer may leave findings in the review body that are
-     not attached to any inline thread (e.g. CodeRabbit "outside diff range"
-     comments). When `check` notes a review body, read it with
-     `mergeable-please view --condition reviewers`, which prints a drill-in
-     command for the body.
-4. **Advisories** (e.g. `approval-required`, `residual-ruleset`) are NOT blockers
-   and never prevent `satisfied`. They require a human (approval) or out-of-scope
-   action. Report them to the user as remaining follow-ups; do not try to satisfy
-   them yourself. For `residual-ruleset`, `mergeable-please view --condition rules`
-   shows the configured ruleset for context.
+   - reviewer `changes requested` → the reviewer formally requested changes. Read
+     the review body and any threads (`view --condition reviewers`), address the
+     feedback, push, then re-request. If you genuinely cannot address the request
+     (e.g. it asks for a change you should not make) and no new commit is
+     possible, **stop and escalate to the human** — the tool will keep reporting
+     blocked, which is correct, and you must not loop. The `Next →` line says
+     exactly this when it applies.
+   - reviewer `awaiting review` → no outstanding request; (re)request and poll in
+     the background as above.
+4. The trailing `~` lines are NOT blockers and never prevent `satisfied`:
+   - `~ approval required (human)` / `~ ruleset block …` → require a human or
+     out-of-scope action. Report them as remaining follow-ups; do not try to
+     satisfy them yourself.
+   - `~ review notes present …` → a reviewer left a review body that may contain
+     findings not tied to any inline thread (e.g. CodeRabbit "outside diff range"
+     comments). Read it with `mergeable-please view --condition reviewers`.
+   - `~ … exhausted …` → a reviewer used all its rallies without meeting its
+     goal; stop the loop for it or raise `max-rallies`.
 
 ## Notes
 
