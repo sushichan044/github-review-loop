@@ -348,13 +348,14 @@ func renderLoopDoneAgent(w io.Writer, v LoopView) error {
 //   - a "status: satisfied|blocked" line
 //   - the Blockers section (when non-empty)
 //   - the Advisories section (always, even when satisfied)
-//   - the reviewer-loop subsection (when ReviewerLoop is non-nil)
-func RenderCheckResult(w io.Writer, r core.CheckResult, f Format) error {
+//   - the reviewer-loop subsection (when loopView is non-nil), rendered with the
+//     same per-reviewer detail as the standalone loop view
+func RenderCheckResult(w io.Writer, r core.CheckResult, loopView *LoopView, f Format) error {
 	switch f {
 	case FormatAgent:
-		return renderCheckAgent(w, r)
+		return renderCheckAgent(w, r, loopView)
 	case FormatHuman:
-		return renderCheckHuman(w, r)
+		return renderCheckHuman(w, r, loopView)
 	default:
 		return fmt.Errorf("unsupported format %q", f)
 	}
@@ -371,6 +372,7 @@ type checkRenderStyles struct {
 	advisoryItem       string // args: kind, title
 	advisoryDetail     string // args: detail
 	reviewerLoopHeader string
+	renderLoop         func(io.Writer, LoopView) error
 }
 
 func humanCheckStyles() checkRenderStyles {
@@ -384,6 +386,7 @@ func humanCheckStyles() checkRenderStyles {
 		advisoryItem:       "  [%s] %s\n",
 		advisoryDetail:     "    %s\n",
 		reviewerLoopHeader: "\nReviewer loop:",
+		renderLoop:         renderHuman,
 	}
 }
 
@@ -398,18 +401,19 @@ func agentCheckStyles() checkRenderStyles {
 		advisoryItem:       "\n### [%s] %s\n",
 		advisoryDetail:     "- **Detail:** %s\n",
 		reviewerLoopHeader: "\n## Reviewer loop",
+		renderLoop:         renderAgent,
 	}
 }
 
-func renderCheckHuman(w io.Writer, r core.CheckResult) error {
-	return renderCheck(w, r, humanCheckStyles())
+func renderCheckHuman(w io.Writer, r core.CheckResult, loopView *LoopView) error {
+	return renderCheck(w, r, loopView, humanCheckStyles())
 }
 
-func renderCheckAgent(w io.Writer, r core.CheckResult) error {
-	return renderCheck(w, r, agentCheckStyles())
+func renderCheckAgent(w io.Writer, r core.CheckResult, loopView *LoopView) error {
+	return renderCheck(w, r, loopView, agentCheckStyles())
 }
 
-func renderCheck(w io.Writer, r core.CheckResult, s checkRenderStyles) error {
+func renderCheck(w io.Writer, r core.CheckResult, loopView *LoopView, s checkRenderStyles) error {
 	statusStr := "satisfied"
 	if !r.Satisfied {
 		statusStr = "blocked"
@@ -423,8 +427,11 @@ func renderCheck(w io.Writer, r core.CheckResult, s checkRenderStyles) error {
 	if err := writeAdvisoriesSection(w, r.Advisories, s); err != nil {
 		return err
 	}
-	if r.ReviewerLoop != nil {
+	if loopView != nil {
 		if _, err := fmt.Fprintln(w, s.reviewerLoopHeader); err != nil {
+			return err
+		}
+		if err := s.renderLoop(w, *loopView); err != nil {
 			return err
 		}
 	}

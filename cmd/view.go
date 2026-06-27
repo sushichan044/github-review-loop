@@ -76,7 +76,7 @@ func runView(ctx context.Context, d deps, resolveFormat formatResolver, conditio
 			return fmt.Errorf("could not evaluate PR: %w", evalErr)
 		}
 		result.Finalize()
-		return output.RenderCheckResult(d.out, result, format)
+		return output.RenderCheckResult(d.out, result, nil, format)
 	default:
 		return fmt.Errorf("unknown --condition %q: must be conflicts, checks, rules, or reviewers", condition)
 	}

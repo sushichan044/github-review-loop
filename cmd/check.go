@@ -61,6 +61,7 @@ func runCheck(ctx context.Context, d deps, resolveFormat formatResolver, args []
 		return err
 	}
 
+	var loopView *output.LoopView
 	if len(policies) > 0 {
 		snapshot, snapErr := d.fetchSnapshot(ctx, pr, policies)
 		if snapErr != nil {
@@ -68,11 +69,18 @@ func runCheck(ctx context.Context, d deps, resolveFormat formatResolver, args []
 		}
 		loopState := reviewer.EvaluateLoop(policies, snapshot)
 		result.ReviewerLoop = &loopState
+
+		comments, commentsErr := d.threadComments(ctx, pr, policies)
+		if commentsErr != nil {
+			return fmt.Errorf("could not fetch reviewer thread comments: %w", commentsErr)
+		}
+		lv := buildLoopView(loopState, snapshot, policies, comments)
+		loopView = &lv
 	}
 
 	result.Finalize()
 
-	if renderErr := output.RenderCheckResult(d.out, result, format); renderErr != nil {
+	if renderErr := output.RenderCheckResult(d.out, result, loopView, format); renderErr != nil {
 		return renderErr
 	}
 

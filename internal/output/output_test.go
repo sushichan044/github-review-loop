@@ -385,10 +385,10 @@ func TestRender_StableOrder(t *testing.T) {
 
 // ── RenderCheckResult ─────────────────────────────────────────────────────────
 
-func renderCheckString(t *testing.T, r core.CheckResult, f output.Format) string {
+func renderCheckString(t *testing.T, r core.CheckResult, loopView *output.LoopView, f output.Format) string {
 	t.Helper()
 	var sb strings.Builder
-	err := output.RenderCheckResult(&sb, r, f)
+	err := output.RenderCheckResult(&sb, r, loopView, f)
 	require.NoError(t, err)
 	return sb.String()
 }
@@ -401,7 +401,7 @@ func TestRenderCheckResult_Satisfied_EmitsStatusLine(t *testing.T) {
 	for _, f := range []output.Format{output.FormatHuman, output.FormatAgent} {
 		t.Run(string(f), func(t *testing.T) {
 			t.Parallel()
-			out := renderCheckString(t, r, f)
+			out := renderCheckString(t, r, nil, f)
 			assert.Contains(t, out, "status: satisfied")
 		})
 	}
@@ -420,7 +420,7 @@ func TestRenderCheckResult_Blocked_EmitsStatusLine(t *testing.T) {
 	for _, f := range []output.Format{output.FormatHuman, output.FormatAgent} {
 		t.Run(string(f), func(t *testing.T) {
 			t.Parallel()
-			out := renderCheckString(t, r, f)
+			out := renderCheckString(t, r, nil, f)
 			assert.Contains(t, out, "status: blocked")
 		})
 	}
@@ -446,7 +446,7 @@ func TestRenderCheckResult_Blockers_Shown(t *testing.T) {
 	for _, f := range []output.Format{output.FormatHuman, output.FormatAgent} {
 		t.Run(string(f), func(t *testing.T) {
 			t.Parallel()
-			out := renderCheckString(t, r, f)
+			out := renderCheckString(t, r, nil, f)
 			assert.Contains(t, out, "check-failing")
 			assert.Contains(t, out, "build / lint")
 		})
@@ -472,27 +472,39 @@ func TestRenderCheckResult_Advisories_AlwaysShown(t *testing.T) {
 	for _, f := range []output.Format{output.FormatHuman, output.FormatAgent} {
 		t.Run(string(f), func(t *testing.T) {
 			t.Parallel()
-			out := renderCheckString(t, r, f)
+			out := renderCheckString(t, r, nil, f)
 			assert.Contains(t, out, "status: satisfied", "satisfied with advisory only")
 			assert.Contains(t, out, "approval-required", "advisory must appear even when satisfied")
 		})
 	}
 }
 
-func TestRenderCheckResult_ReviewerLoop_SectionPresent(t *testing.T) {
+func TestRenderCheckResult_ReviewerLoop_DetailRendered(t *testing.T) {
 	t.Parallel()
 
-	loop := &reviewer.LoopState{Done: true}
-	r := core.CheckResult{
-		Satisfied:    true,
-		ReviewerLoop: loop,
+	loopView := &output.LoopView{
+		Done: true,
+		Reviewers: []output.ReviewerView{
+			{
+				Identity:   aliceIdentity(),
+				Goal:       reviewer.GoalApproved,
+				Phase:      reviewer.PhaseGoalMet,
+				RallyCount: 1,
+				MaxRallies: 3,
+				GoalMet:    true,
+			},
+		},
 	}
+	r := core.CheckResult{Satisfied: true}
 
 	for _, f := range []output.Format{output.FormatHuman, output.FormatAgent} {
 		t.Run(string(f), func(t *testing.T) {
 			t.Parallel()
-			out := renderCheckString(t, r, f)
-			assert.Contains(t, out, "Reviewer loop", "reviewer loop section must appear when ReviewerLoop is set")
+			out := renderCheckString(t, r, loopView, f)
+			assert.Contains(t, out, "Reviewer loop", "reviewer loop header must appear")
+			// The fix: per-reviewer detail must render, not just the header.
+			assert.Contains(t, out, "alice", "reviewer identity must be rendered")
+			assert.Contains(t, out, "goal-met", "reviewer phase must be rendered")
 		})
 	}
 }
