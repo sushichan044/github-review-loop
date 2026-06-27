@@ -302,12 +302,14 @@ func TestRenderCheckResult_Blockers_AsTaskItems(t *testing.T) {
 		Title: "Required CI check failing", Detail: "build / lint",
 	}}}, nil)
 
-	// A failing required check is an unchecked task item naming the check; the
-	// other dimensions stay checked. The Next line points at `view`.
-	assert.Contains(t, out, "- [ ] required checks — build / lint failing")
-	assert.Contains(t, out, "- [x] conflicts")
-	assert.Contains(t, out, "Next →")
+	// A failing required check is an unchecked item with an indented status
+	// detail naming the check and a "→ action" pointing at `view`; the other
+	// dimensions stay checked.
+	assert.Contains(t, out, "- [ ] required checks")
+	assert.Contains(t, out, "build / lint failing", "indented status names the failing check")
+	assert.Contains(t, out, "→ fix the failing required checks")
 	assert.Contains(t, out, "view --condition checks")
+	assert.Contains(t, out, "- [x] conflicts")
 	assert.NotContains(t, out, "## Blockers", "the task list replaces the section format")
 }
 
@@ -341,7 +343,8 @@ func TestRenderCheckResult_Reviewer_AsTaskItems(t *testing.T) {
 	out := renderCheckString(t, core.CheckResult{}, loopView)
 
 	assert.Contains(t, out, "- [x] user:alice — goal met")
-	assert.Contains(t, out, "- [ ] github-app:coderabbitai — 2 unresolved (3/5)")
+	assert.Contains(t, out, "- [ ] github-app:coderabbitai — 2 unresolved")
+	assert.Contains(t, out, "rally 3/5", "rally is an indented supplement under the item")
 	assert.NotContains(t, out, "## Reviewer loop", "reviewers are task items, not a detailed section")
 }
 
@@ -366,9 +369,9 @@ func TestRenderCheckResult_ChangesRequested_NextEscalatesOrAddresses(t *testing.
 	}}}
 	out := renderCheckString(t, core.CheckResult{}, loopView)
 
-	assert.Contains(t, out, "- [ ] github-app:coderabbitai — changes requested (1/5)")
-	assert.Contains(t, out, "Next →")
-	assert.Contains(t, out, "escalate")
+	assert.Contains(t, out, "- [ ] github-app:coderabbitai — changes requested")
+	assert.Contains(t, out, "rally 1/5", "rally is an indented supplement")
+	assert.Contains(t, out, "escalate", "the indented action says to address or escalate")
 }
 
 func TestRenderCheckResult_Exhausted_DoneWithWarning(t *testing.T) {
@@ -380,7 +383,7 @@ func TestRenderCheckResult_Exhausted_DoneWithWarning(t *testing.T) {
 	out := renderCheckString(t, core.CheckResult{Satisfied: true}, loopView)
 
 	assert.Contains(t, out, "- [x] user:alice — exhausted (5/5) ⚠", "exhausted is terminal/done with a warning marker")
-	assert.Contains(t, out, "~ user:alice exhausted", "exhausted reviewer is also called out as a ~ note")
+	assert.Contains(t, out, "goal not met after max rallies", "the warning is an indented detail under the item")
 }
 
 // ── RenderDimensionView ───────────────────────────────────────────────────────

@@ -23,18 +23,20 @@ tells you the next action. **You** drive the loop by re-running it after each fi
    PR's branch, e.g. `mergeable-please check 42`).
 2. `check` prints a task list. The first line is the header
    `status: satisfied|blocked · owner/repo#n <url>`; then one checkbox per merge
-   condition and reviewer, trailing `~` lines for human-only notes, and a single
-   `Next →` step. Read the exit code and header:
+   condition and reviewer. Each item may carry indented supplements: a status
+   line (e.g. `rally 3/5 · goal approved`) and a `→ action` naming the next move
+   and, after `·`, the one `view`/`request` subcommand for depth. Trailing `~`
+   lines are human-only notes. Read the exit code and header:
    - exit `0` / `status: satisfied` → **stop**. Every `- [x]` is done; only
      human-gated `~` advisories (if any) remain.
-   - exit `1` / `status: blocked` → the `- [ ]` items are outstanding. The
-     `Next →` line is your single best next move (and the one command to run for
-     it); do that, then go back to step 1.
+   - exit `1` / `status: blocked` → the `- [ ]` items are outstanding. Work them
+     top-down, following each item's indented `→ action`, then go back to step 1.
    - exit `2` → a usage/config/API error. Read the message and fix the invocation
      (do not loop on this).
-3. For depth on any item, use `view` (`mergeable-please view --condition
-   checks|conflicts|rules|reviewers`) — `check` itself stays terse. Resolve each
-   outstanding `- [ ]` item by its kind, then go back to step 1:
+3. For depth on any item, run the subcommand from its `→ action` (e.g.
+   `mergeable-please view --condition checks|conflicts|rules|reviewers`) — `check`
+   itself stays terse. Resolve each outstanding `- [ ]` item by its kind, then go
+   back to step 1:
    - `conflict` → merge or rebase the base branch, resolve conflicts, commit, push.
    - `behind-base` → the repo enforces up-to-date branches. Rebase onto the base
      and push (`git fetch && git rebase origin/<base> && git push --force-with-lease`).
@@ -55,7 +57,7 @@ tells you the next action. **You** drive the loop by re-running it after each fi
      feedback, push, then re-request. If you genuinely cannot address the request
      (e.g. it asks for a change you should not make) and no new commit is
      possible, **stop and escalate to the human** — the tool will keep reporting
-     blocked, which is correct, and you must not loop. The `Next →` line says
+     blocked, which is correct, and you must not loop. The item's `→ action` says
      exactly this when it applies.
    - reviewer `awaiting review` → no outstanding request; (re)request and poll in
      the background as above.

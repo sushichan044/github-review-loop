@@ -82,24 +82,23 @@ func writeTarget(w io.Writer, target string) error {
 	return err
 }
 
-// taskItem is one line of the check task list: a checkbox state and a label.
+// taskItem is one line of the check task list: a checkbox state, a label, and
+// indented supplementary lines (status detail and a "→ action").
 type taskItem struct {
-	done  bool
-	label string
+	done    bool
+	label   string
+	details []string
 }
 
-// nextStepT is the single highest-priority action for a blocked check.
-type nextStepT struct {
-	action  string
-	command string
-}
+const detailIndent = "      " // aligns under the "- [ ] " checkbox prefix
 
-// RenderCheckResult writes a [core.CheckResult] as a lean task list. The first
-// line is the machine-readable "status: satisfied|blocked …" header (the loop
-// stop signal mirrors the exit code); the body is one checkbox per merge
-// condition and reviewer, trailing "~" lines for human-only advisories, and a
-// single "Next →" step for the highest-priority outstanding item. Depth (failing
-// check names, comment bodies, ruleset rules) lives in `view`, not here.
+// RenderCheckResult writes a [core.CheckResult] as a task list. The first line
+// is the machine-readable "status: satisfied|blocked …" header (the loop stop
+// signal mirrors the exit code); then one checkbox per merge condition and
+// reviewer, each with indented supplements (rally/goal, and a "→ action" naming
+// the next move and the one command for depth), and trailing "~" lines for
+// human-only advisories. Deep detail (failing logs, comment bodies, ruleset
+// rules) lives in `view`, not here.
 func RenderCheckResult(w io.Writer, r core.CheckResult, loopView *LoopView, target string) error {
 	status := "satisfied"
 	if !r.Satisfied {
@@ -118,17 +117,13 @@ func RenderCheckResult(w io.Writer, r core.CheckResult, loopView *LoopView, targ
 			box = "x"
 		}
 		lines = append(lines, fmt.Sprintf("- [%s] %s", box, it.label))
+		for _, d := range it.details {
+			lines = append(lines, detailIndent+d)
+		}
 	}
 
 	for _, a := range advisoryLines(r, loopView) {
 		lines = append(lines, "~ "+a)
-	}
-
-	if step := nextStep(r, loopView); step != nil {
-		lines = append(lines, "", "Next → "+step.action)
-		if step.command != "" {
-			lines = append(lines, "       "+step.command)
-		}
 	}
 
 	for _, ln := range lines {
@@ -144,13 +139,19 @@ func RenderCheckResult(w io.Writer, r core.CheckResult, loopView *LoopView, targ
 // followed by one item per reviewer. A dimension is done when no blocker of its
 // kind is present.
 func checkTaskItems(r core.CheckResult, lv *LoopView) []taskItem {
+	b := r.Blockers
 	items := []taskItem{
-		{done: !hasBlockerKind(r.Blockers, core.ConditionConflict), label: "conflicts"},
-		{done: !hasBlockerKind(r.Blockers, core.ConditionBehindBase), label: "base up-to-date"},
-		requiredChecksItem(r.Blockers),
+		simpleDimension(b, core.ConditionConflict, "conflicts",
+			"resolve merge conflicts (merge or rebase the base branch), commit, push", ""),
+		simpleDimension(b, core.ConditionBehindBase, "base up-to-date",
+			"rebase onto the base branch and push", ""),
+		requiredChecksItem(b),
 	}
-	if hasBlockerKind(r.Blockers, core.ConditionMergeEligibilityPending) {
-		items = append(items, taskItem{label: "merge eligibility — still computing"})
+	if hasBlockerKind(b, core.ConditionMergeEligibilityPending) {
+		items = append(items, taskItem{
+			label:   "merge eligibility — still computing",
+			details: []string{actionLine("wait ~30s for GitHub to compute the merge state, then re-run check", "")},
+		})
 	}
 	if lv != nil {
 		for _, rv := range lv.Reviewers {
@@ -160,20 +161,38 @@ func checkTaskItems(r core.CheckResult, lv *LoopView) []taskItem {
 	return items
 }
 
-// requiredChecksItem collapses the failing/pending required-check blockers into a
-// single line, naming the checks when the attribution provided them.
+// simpleDimension builds a dimension item that is done unless a blocker of the
+// given kind is present, in which case it carries a single "→ action" detail.
+func simpleDimension(blockers []core.Condition, kind core.ConditionKind, label, action, command string) taskItem {
+	if !hasBlockerKind(blockers, kind) {
+		return taskItem{done: true, label: label}
+	}
+	return taskItem{label: label, details: []string{actionLine(action, command)}}
+}
+
+// requiredChecksItem builds the required-checks item: done when no check
+// blocker is present, otherwise a status detail naming the checks plus a
+// "→ action".
 func requiredChecksItem(blockers []core.Condition) taskItem {
-	var parts []string
-	if hasBlockerKind(blockers, core.ConditionCheckFailing) {
-		parts = append(parts, labelWithDetail(blockerDetail(blockers, core.ConditionCheckFailing), "failing"))
-	}
-	if hasBlockerKind(blockers, core.ConditionCheckPending) {
-		parts = append(parts, labelWithDetail(blockerDetail(blockers, core.ConditionCheckPending), "pending"))
-	}
-	if len(parts) == 0 {
+	hasFailing := hasBlockerKind(blockers, core.ConditionCheckFailing)
+	hasPending := hasBlockerKind(blockers, core.ConditionCheckPending)
+	if !hasFailing && !hasPending {
 		return taskItem{done: true, label: "required checks"}
 	}
-	return taskItem{label: "required checks — " + strings.Join(parts, ", ")}
+
+	var parts []string
+	if hasFailing {
+		parts = append(parts, labelWithDetail(blockerDetail(blockers, core.ConditionCheckFailing), "failing"))
+	}
+	if hasPending {
+		parts = append(parts, labelWithDetail(blockerDetail(blockers, core.ConditionCheckPending), "pending"))
+	}
+
+	action := actionLine("wait for required checks to finish, then re-run check", "")
+	if hasFailing {
+		action = actionLine("fix the failing required checks, then push", "view --condition checks")
+	}
+	return taskItem{label: "required checks", details: []string{strings.Join(parts, ", "), action}}
 }
 
 // labelWithDetail renders "<detail> <suffix>" when detail is present, else suffix.
@@ -184,39 +203,70 @@ func labelWithDetail(detail, suffix string) string {
 	return detail + " " + suffix
 }
 
-// reviewerTaskItem maps one reviewer's state to a task line. Terminal phases
-// (goal-met, exhausted) are done; an active reviewer is outstanding and labeled
-// by the reason it is still blocking.
+// actionLine renders a "→ action" detail, appending "· command" when a command
+// is given. The command is the bare subcommand (the agent knows the binary).
+func actionLine(action, command string) string {
+	if command == "" {
+		return "→ " + action
+	}
+	return "→ " + action + " · " + command
+}
+
+// reviewerTaskItem maps one reviewer's state to a task item. Terminal phases
+// (goal-met, exhausted) are done; an active reviewer is outstanding, labeled by
+// the reason it is still blocking, with rally/goal and a "→ action" supplement.
 func reviewerTaskItem(rv ReviewerView) taskItem {
 	id := formatIdentity(rv.Identity)
 	switch rv.Phase {
 	case reviewer.PhaseGoalMet:
-		return taskItem{done: true, label: id + " — goal met"}
+		return taskItem{done: true, label: id + " — goal met", details: []string{rallyLine(rv)}}
 
 	case reviewer.PhaseExhausted:
-		return taskItem{done: true, label: fmt.Sprintf("%s — exhausted (%d/%d) ⚠", id, rv.RallyCount, rv.MaxRallies)}
+		return taskItem{
+			done:    true,
+			label:   fmt.Sprintf("%s — exhausted (%d/%d) ⚠", id, rv.RallyCount, rv.MaxRallies),
+			details: []string{"goal not met after max rallies — stop the loop or raise max-rallies"},
+		}
 
 	case reviewer.PhaseActive:
-		rally := fmt.Sprintf("(%d/%d)", rv.RallyCount, rv.MaxRallies)
-		switch {
-		case rv.ChangesRequested:
-			return taskItem{label: fmt.Sprintf("%s — changes requested %s", id, rally)}
-		case rv.unresolvedCount() > 0:
-			return taskItem{label: fmt.Sprintf("%s — %d unresolved %s", id, rv.unresolvedCount(), rally)}
-		case rv.CanRerequest:
-			return taskItem{label: fmt.Sprintf("%s — awaiting review %s", id, rally)}
-		default:
-			return taskItem{label: fmt.Sprintf("%s — awaiting response %s", id, rally)}
-		}
+		label, action, command := reviewerActive(rv, id)
+		status := fmt.Sprintf("rally %d/%d · goal %s", rv.RallyCount, rv.MaxRallies, rv.Goal)
+		return taskItem{label: label, details: []string{status, actionLine(action, command)}}
 	}
 
 	// unreachable: all Phase values handled above
 	return taskItem{label: id}
 }
 
-// advisoryLines returns the trailing "~" notes: human-only advisories, an
-// exhausted-reviewer warning, and a single review-notes pointer when any
-// reviewer left a review body.
+// rallyLine renders the rally counter detail for a reviewer.
+func rallyLine(rv ReviewerView) string {
+	return fmt.Sprintf("rally %d/%d", rv.RallyCount, rv.MaxRallies)
+}
+
+// reviewerActive returns the label, action, and command (in that order) for an
+// active reviewer, chosen by the reason it is still blocking.
+func reviewerActive(rv ReviewerView, id string) (string, string, string) {
+	switch {
+	case rv.ChangesRequested:
+		return id + " — changes requested",
+			"address the requested changes (read the body), push, then re-request — or escalate if you cannot",
+			"view --condition reviewers"
+	case rv.unresolvedCount() > 0:
+		return fmt.Sprintf("%s — %d unresolved", id, rv.unresolvedCount()),
+			fmt.Sprintf("resolve the %d unresolved thread(s), then push", rv.unresolvedCount()),
+			"view --condition reviewers"
+	case rv.CanRerequest:
+		return id + " — awaiting review",
+			"re-request, then poll in a background shell (sleep 60 && " + programName + " check)",
+			"request --reviewer " + id
+	default:
+		return id + " — awaiting response", rv.BlockReason, ""
+	}
+}
+
+// advisoryLines returns the trailing "~" notes: human-only advisories and a
+// single review-notes pointer when any reviewer left a review body. (Exhausted
+// reviewers are called out in their own task item.)
 func advisoryLines(r core.CheckResult, lv *LoopView) []string {
 	var lines []string
 	for _, a := range r.Advisories {
@@ -224,13 +274,6 @@ func advisoryLines(r core.CheckResult, lv *LoopView) []string {
 	}
 	if lv == nil {
 		return lines
-	}
-	for _, rv := range lv.Reviewers {
-		if rv.Phase == reviewer.PhaseExhausted {
-			lines = append(lines, fmt.Sprintf(
-				"%s exhausted %d/%d rallies without meeting goal — stop the loop or raise max-rallies",
-				formatIdentity(rv.Identity), rv.RallyCount, rv.MaxRallies))
-		}
 	}
 	for _, rv := range lv.Reviewers {
 		if rv.ReviewBodyPresent {
@@ -256,79 +299,6 @@ func advisoryLabel(c core.Condition) string {
 		return "check list truncated at 100 — " + programName + " view --condition checks"
 	default:
 		return c.Title
-	}
-}
-
-// nextStep returns the single highest-priority action for a blocked check, or
-// nil when nothing is outstanding. Dimensions are tried in fix-first order, then
-// reviewers; only the top item is expanded so the agent has one clear move.
-func nextStep(r core.CheckResult, lv *LoopView) *nextStepT {
-	dimSteps := []struct {
-		kind    core.ConditionKind
-		action  string
-		command string
-	}{
-		{core.ConditionConflict, "resolve merge conflicts (merge or rebase the base branch), commit, push", ""},
-		{core.ConditionBehindBase, "rebase onto the base branch and push", ""},
-		{
-			core.ConditionCheckFailing,
-			"fix the failing required checks, then push",
-			programName + " view --condition checks",
-		},
-		{core.ConditionCheckPending, "wait for required checks to finish, then re-run check", ""},
-		{
-			core.ConditionMergeEligibilityPending,
-			"wait ~30s for GitHub to compute the merge state, then re-run check",
-			"",
-		},
-	}
-	for _, s := range dimSteps {
-		if hasBlockerKind(r.Blockers, s.kind) {
-			return &nextStepT{action: s.action, command: s.command}
-		}
-	}
-
-	if lv == nil {
-		return nil
-	}
-	for _, rv := range lv.Reviewers {
-		if rv.Phase != reviewer.PhaseActive {
-			continue
-		}
-		return reviewerNextStep(rv)
-	}
-	return nil
-}
-
-// reviewerNextStep returns the action for an active reviewer that is the top
-// outstanding item.
-func reviewerNextStep(rv ReviewerView) *nextStepT {
-	id := formatIdentity(rv.Identity)
-	switch {
-	case rv.ChangesRequested:
-		return &nextStepT{
-			action: fmt.Sprintf(
-				"address %s's requested changes (read the body), push, then re-request — or escalate if you cannot",
-				id,
-			),
-			command: programName + " view --condition reviewers",
-		}
-	case rv.unresolvedCount() > 0:
-		return &nextStepT{
-			action:  fmt.Sprintf("resolve %s's %d unresolved thread(s), then push", id, rv.unresolvedCount()),
-			command: programName + " view --condition reviewers",
-		}
-	case rv.CanRerequest:
-		return &nextStepT{
-			action: fmt.Sprintf(
-				"re-request %s, then poll in a background shell (sleep 60 && %s check)",
-				id,
-				programName,
-			),
-			command: programName + " request --reviewer " + id,
-		}
-	default:
-		return &nextStepT{action: fmt.Sprintf("%s: %s", id, rv.BlockReason)}
 	}
 }
 
