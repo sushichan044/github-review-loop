@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/url"
 
 	"github.com/cli/go-gh/v2/pkg/api"
 
@@ -44,7 +45,9 @@ func fetchBranchRules(_ context.Context, pr backend.PRCoords) ([]backend.BranchR
 		return nil, errors.New("github rules: PR response missing base.ref")
 	}
 
-	path := fmt.Sprintf("repos/%s/%s/rules/branches/%s", pr.Owner, pr.Repo, baseBranch)
+	// Branch refs may contain "/" (e.g. "feature/foo"); escape so the path
+	// segment is not split into extra path components.
+	path := fmt.Sprintf("repos/%s/%s/rules/branches/%s", pr.Owner, pr.Repo, url.PathEscape(baseBranch))
 
 	var raw []branchRuleResponse
 	if getErr := restClient.Get(path, &raw); getErr != nil {

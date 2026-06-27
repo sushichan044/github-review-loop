@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"strings"
-	"time"
 
 	"github.com/spf13/cobra"
 
@@ -143,7 +142,7 @@ func runViewReviewers(ctx context.Context, d deps, pr github.PR) error {
 	}
 
 	loopState := reviewer.EvaluateLoop(policies, snapshot)
-	view := buildLoopView(loopState, snapshot, policies, allCommentsByKey)
+	view := buildLoopView(loopState, policies, allCommentsByKey)
 
 	return output.Render(d.out, view)
 }
@@ -151,7 +150,6 @@ func runViewReviewers(ctx context.Context, d deps, pr github.PR) error {
 // buildLoopView maps a reviewer.LoopState into an output.LoopView.
 func buildLoopView(
 	state reviewer.LoopState,
-	snapshot reviewer.Snapshot,
 	policies []reviewer.Policy,
 	allCommentsByKey map[string][]github.ThreadComment,
 ) output.LoopView {
@@ -165,24 +163,18 @@ func buildLoopView(
 	for _, rs := range state.Reviewers {
 		p := policyByIdentity[rs.Identity]
 		key := github.IdentityKey(rs.Identity)
-		lastRally := lastRallyTime(rs.Identity, snapshot.Triggers)
 
 		var unresolvedComments []output.CommentView
-		var newComments []output.CommentView
-
 		for _, c := range allCommentsByKey[key] {
-			cv := output.CommentView{
+			if c.Resolved {
+				continue
+			}
+			unresolvedComments = append(unresolvedComments, output.CommentView{
 				Author: c.Author,
 				Body:   c.Body,
 				URL:    c.URL,
 				At:     c.CreatedAt,
-			}
-			if !c.Resolved {
-				unresolvedComments = append(unresolvedComments, cv)
-			}
-			if c.CreatedAt.After(lastRally) {
-				newComments = append(newComments, cv)
-			}
+			})
 		}
 
 		reviewerViews = append(reviewerViews, output.ReviewerView{
@@ -195,7 +187,6 @@ func buildLoopView(
 			CanRerequest:       rs.CanRerequest,
 			BlockReason:        rs.BlockReason,
 			UnresolvedComments: unresolvedComments,
-			NewComments:        newComments,
 		})
 	}
 
@@ -203,23 +194,6 @@ func buildLoopView(
 		Reviewers: reviewerViews,
 		Done:      state.Done,
 	}
-}
-
-// lastRallyTime returns the latest TriggerAction.At for the given identity.
-func lastRallyTime(identity reviewer.Identity, triggers []reviewer.TriggerAction) time.Time {
-	var latest time.Time
-	for _, t := range triggers {
-		if t.Reviewer.Type != identity.Type {
-			continue
-		}
-		if !strings.EqualFold(t.Reviewer.Name, identity.Name) {
-			continue
-		}
-		if t.At.After(latest) {
-			latest = t.At
-		}
-	}
-	return latest
 }
 
 // filterConditionsByKind returns only those conditions whose Kind is in the allow-list.
@@ -289,7 +263,9 @@ func buildConciseLoopView(
 // review-thread comments via the GraphQL API. REST review comments carry no
 // resolved state, so GraphQL reviewThreads.isResolved is used to filter.
 func reviewerCommentsDrillIn(id reviewer.Identity, pr github.PR) string {
-	login := strings.ToLower(reviewerCommentLogin(id))
+	// The login is interpolated inside the single-quoted --jq argument; escape any
+	// single quote (config allows arbitrary reviewer names) so it cannot break out.
+	login := shellSingleQuoteEscape(strings.ToLower(reviewerCommentLogin(id)))
 	const query = "query($o:String!,$r:String!,$n:Int!){repository(owner:$o,name:$r)" +
 		"{pullRequest(number:$n){reviewThreads(first:100){nodes{isResolved " +
 		"comments(first:1){nodes{author{login} body path line url}}}}}}}"
@@ -303,6 +279,12 @@ func reviewerCommentsDrillIn(id reviewer.Identity, pr github.PR) string {
 		"gh api graphql -f query='%s' -f o=%s -f r=%s -F n=%d --jq '%s'",
 		query, pr.Owner, pr.Repo, pr.Number, jq,
 	)
+}
+
+// shellSingleQuoteEscape makes s safe to embed inside a single-quoted shell
+// argument by replacing each single quote with the '\” close/escape/reopen idiom.
+func shellSingleQuoteEscape(s string) string {
+	return strings.ReplaceAll(s, "'", `'\''`)
 }
 
 // reviewerCommentLogin returns the expected GitHub comment-author login prefix for a reviewer.

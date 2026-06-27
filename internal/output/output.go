@@ -43,7 +43,6 @@ type ReviewerView struct {
 
 	// Full mode (view --condition reviewers): comment bodies.
 	UnresolvedComments []CommentView
-	NewComments        []CommentView
 
 	// Concise mode (check): count + drill-in command, no bodies.
 	UnresolvedCount int    // number of unresolved review threads for this reviewer
