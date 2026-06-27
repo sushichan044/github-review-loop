@@ -47,6 +47,22 @@ type ReviewerView struct {
 	// Concise mode (check): count + drill-in command, no bodies.
 	UnresolvedCount int    // number of unresolved review threads for this reviewer
 	DrillInCmd      string // gh command to fetch this reviewer's unresolved review comments
+
+	// ChangesRequested is true when the reviewer's latest review requests changes;
+	// it drives the changes-requested next-action and gates the loop upstream.
+	ChangesRequested bool
+
+	// Latest-review summary, used to surface a review-level body (findings not
+	// tied to any inline thread). LatestReviewState is the GitHub review state.
+	LatestReviewState     reviewer.ReviewState
+	LatestReviewCommitOID string
+
+	// ReviewBodyPresent is true when the latest review has a non-empty body.
+	// ReviewBodyDrillInCmd is the gh command to read that body; it is set only in
+	// full mode (view). In concise mode (check) it is empty and the renderer
+	// points the agent at `view --condition reviewers` instead.
+	ReviewBodyPresent    bool
+	ReviewBodyDrillInCmd string
 }
 
 // LoopView is the rendering context for the entire reviewer loop.
@@ -163,8 +179,45 @@ func writeReviewer(w io.Writer, r ReviewerView) error {
 	if err := writeReviewerComments(w, r); err != nil {
 		return err
 	}
+	if err := writeReviewBodyPointer(w, r); err != nil {
+		return err
+	}
 	_, err := fmt.Fprintf(w, "\n**Next action:** %s\n", nextAction(r))
 	return err
+}
+
+// writeReviewBodyPointer surfaces the presence of a review-level body (e.g.
+// CodeRabbit "outside diff range" findings that are not attached to any inline
+// thread). The body is untrusted and often mostly boilerplate, so it is never
+// inlined here: concise mode (check) points at the view command, full mode
+// (view) emits a drill-in command that reads the body on demand.
+func writeReviewBodyPointer(w io.Writer, r ReviewerView) error {
+	if !r.ReviewBodyPresent {
+		return nil
+	}
+	on := ""
+	if r.LatestReviewCommitOID != "" {
+		on = fmt.Sprintf(" on `%s`", shortOID(r.LatestReviewCommitOID))
+	}
+	if r.ReviewBodyDrillInCmd != "" {
+		_, err := fmt.Fprintf(w, "\n**Review body** (%s review%s) — read it:\n```sh\n%s\n```\n",
+			r.LatestReviewState, on, r.ReviewBodyDrillInCmd)
+		return err
+	}
+	_, err := fmt.Fprintf(w,
+		"\nℹ️ Latest %s review%s has a body (may contain findings not tied to a thread) — "+
+			"read it with `%s view --condition reviewers`.\n",
+		r.LatestReviewState, on, programName)
+	return err
+}
+
+// shortOID truncates a commit OID to its first 7 characters for display.
+func shortOID(oid string) string {
+	const n = 7
+	if len(oid) <= n {
+		return oid
+	}
+	return oid[:n]
 }
 
 // writeReviewerComments renders comment bodies in full mode, or the unresolved
@@ -244,6 +297,12 @@ func nextAction(r ReviewerView) string {
 		)
 
 	case reviewer.PhaseActive:
+		// A changes-requested review is the formal blocker: it supersedes the
+		// generic active guidance because it must be cleared by a re-review.
+		if r.ChangesRequested {
+			return changesRequestedAction(r)
+		}
+
 		// Unresolved conversations must be addressed before any re-request: a
 		// re-request does not advance the goal while the reviewer's existing
 		// comments are still open.
@@ -274,6 +333,29 @@ func nextAction(r ReviewerView) string {
 
 	// unreachable: all Phase values handled above
 	return ""
+}
+
+// changesRequestedAction returns the next-action for a reviewer whose latest
+// review requests changes. When a re-request can advance the loop the agent
+// should address and re-request; otherwise it must escalate rather than spin,
+// because the tool cannot make the PR mergeable on its own.
+func changesRequestedAction(r ReviewerView) string {
+	id := formatIdentity(r.Identity)
+	if r.CanRerequest {
+		return fmt.Sprintf(
+			"%s requested changes. Read the review body, address the feedback (and resolve any open "+
+				"threads), push a commit, then re-request: `%s request --reviewer %s`. Then poll in a "+
+				"BACKGROUND shell — run `sleep 60 && %s check` as a background job (do not run it in the "+
+				"foreground).",
+			id, programName, id, programName,
+		)
+	}
+	return fmt.Sprintf(
+		"%s requested changes and a re-request is blocked: %s. If there are changes you can make, push "+
+			"them. If you cannot address the request, STOP and escalate to a human — this PR cannot be "+
+			"made mergeable automatically. If a request is already pending, wait for the reviewer to respond.",
+		id, r.BlockReason,
+	)
 }
 
 // unresolvedCount returns the number of unresolved threads for the reviewer,

@@ -36,10 +36,24 @@ tells you the next action. **You** drive the loop by re-running it after each fi
    - `check-pending` → required checks are still running. Wait, then re-run check.
    - `merge-eligibility-pending` → GitHub is still computing the merge state. Wait
      15–30 seconds and re-run check.
-   - reviewer-loop blockers → if a reviewer is ready to (re)request, run
-     `mergeable-please request --reviewer <type:name>`; otherwise address the
-     reviewer's unresolved comments and push a new commit. Re-requests are blocked
-     until the head advances, so always push your fix first.
+   - reviewer-loop blockers → follow each reviewer's **Next action** verbatim.
+     In general: resolve any unresolved conversations first, then push, then
+     (re)request with `mergeable-please request --reviewer <type:name>`.
+     Re-requests are blocked until the head advances, so always push your fix
+     first. After (re)requesting, the reviewer needs time to respond — poll in a
+     **background** shell (e.g. run `sleep 60 && mergeable-please check` as a
+     background job, never in the foreground) so you are not blocked.
+   - **changes-requested** → a reviewer formally requested changes. Read the
+     review body and any threads, address the feedback, push, then re-request.
+     If you genuinely cannot address the request (e.g. it asks for a change you
+     should not make) and no new commit is possible, **stop and escalate to the
+     human** — the tool will keep reporting blocked, which is correct, and you
+     must not loop. The reviewer's Next action says exactly this when it applies.
+   - **review body** → a reviewer may leave findings in the review body that are
+     not attached to any inline thread (e.g. CodeRabbit "outside diff range"
+     comments). When `check` notes a review body, read it with
+     `mergeable-please view --condition reviewers`, which prints a drill-in
+     command for the body.
 4. **Advisories** (e.g. `approval-required`, `residual-ruleset`) are NOT blockers
    and never prevent `satisfied`. They require a human (approval) or out-of-scope
    action. Report them to the user as remaining follow-ups; do not try to satisfy

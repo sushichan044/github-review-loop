@@ -116,6 +116,8 @@ func applyPullRequestReview(
 		State:     mapReviewState(r.State),
 		CommitOID: r.CommitOID,
 		At:        r.SubmittedAt,
+		Body:      r.Body,
+		ID:        r.ID,
 	})
 }
 

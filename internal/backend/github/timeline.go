@@ -55,6 +55,8 @@ type pullRequestReviewEvent struct {
 	State       string
 	CommitOID   string
 	SubmittedAt time.Time
+	Body        string
+	ID          string
 }
 
 type pullRequestCommitEvent struct {
@@ -103,9 +105,11 @@ type prTimelineNode struct {
 		Author struct {
 			Login string
 		}
-		State       string
-		SubmittedAt graphqlTime
-		Commit      struct {
+		State          string
+		SubmittedAt    graphqlTime
+		Body           string
+		FullDatabaseID string `graphql:"fullDatabaseId"`
+		Commit         struct {
 			Oid string
 		}
 	} `graphql:"... on PullRequestReview"`
@@ -212,6 +216,8 @@ func convertTimelineNode(n prTimelineNode) timelineNode {
 			State:       n.PullRequestReview.State,
 			CommitOID:   n.PullRequestReview.Commit.Oid,
 			SubmittedAt: n.PullRequestReview.SubmittedAt.Time,
+			Body:        n.PullRequestReview.Body,
+			ID:          n.PullRequestReview.FullDatabaseID,
 		}
 	case "PullRequestCommit":
 		node.PullRequestCommit = &pullRequestCommitEvent{

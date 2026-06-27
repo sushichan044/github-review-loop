@@ -147,6 +147,64 @@ func TestRender_Active_CanRerequest_PollsInBackground(t *testing.T) {
 	assert.Contains(t, out, "background job")
 }
 
+func TestRender_Active_ChangesRequested_CanRerequest(t *testing.T) {
+	t.Parallel()
+
+	out := renderString(t, output.LoopView{Reviewers: []output.ReviewerView{{
+		Identity: aliceIdentity(), Goal: reviewer.GoalApproved,
+		Phase: reviewer.PhaseActive, RallyCount: 1, MaxRallies: 3,
+		CanRerequest: true, ChangesRequested: true,
+	}}})
+
+	assert.Contains(t, out, "requested changes", "changes-requested action is rendered")
+	assert.Contains(t, out, "request --reviewer", "should suggest re-request after addressing")
+	assert.Contains(t, out, "BACKGROUND", "poll must be a background job")
+}
+
+func TestRender_Active_ChangesRequested_Stuck_Escalates(t *testing.T) {
+	t.Parallel()
+
+	out := renderString(t, output.LoopView{Reviewers: []output.ReviewerView{{
+		Identity: aliceIdentity(), Goal: reviewer.GoalApproved,
+		Phase: reviewer.PhaseActive, RallyCount: 1, MaxRallies: 3,
+		CanRerequest: false, ChangesRequested: true,
+		BlockReason: "no new commit since last review",
+	}}})
+
+	// When a re-request cannot advance the loop, the agent must escalate, not spin.
+	assert.Contains(t, out, "escalate to a human")
+	assert.Contains(t, out, "cannot be")
+}
+
+func TestRender_ReviewBody_ConciseMode_PointsAtViewCommand(t *testing.T) {
+	t.Parallel()
+
+	out := renderString(t, output.LoopView{Reviewers: []output.ReviewerView{{
+		Identity: aliceIdentity(), Goal: reviewer.GoalAllConversationsResolved,
+		Phase: reviewer.PhaseGoalMet, GoalMet: true,
+		LatestReviewState: reviewer.ReviewStateCommented, LatestReviewCommitOID: "abc1234567",
+		ReviewBodyPresent: true, // ReviewBodyDrillInCmd empty → concise mode
+	}}})
+
+	assert.Contains(t, out, "view --condition reviewers", "concise mode points at the view command")
+	assert.Contains(t, out, "abc1234", "short commit oid is shown")
+	assert.NotContains(t, out, "gh api repos", "concise mode does not emit the body drill-in")
+}
+
+func TestRender_ReviewBody_FullMode_ShowsDrillIn(t *testing.T) {
+	t.Parallel()
+
+	const drillIn = "gh api repos/o/r/pulls/3/reviews/123 --jq .body"
+	out := renderString(t, output.LoopView{Reviewers: []output.ReviewerView{{
+		Identity: aliceIdentity(), Goal: reviewer.GoalAllConversationsResolved,
+		Phase: reviewer.PhaseGoalMet, GoalMet: true,
+		LatestReviewState: reviewer.ReviewStateCommented,
+		ReviewBodyPresent: true, ReviewBodyDrillInCmd: drillIn,
+	}}})
+
+	assert.Contains(t, out, drillIn, "full mode emits the body drill-in command")
+}
+
 func TestRender_DoneLoop(t *testing.T) {
 	t.Parallel()
 

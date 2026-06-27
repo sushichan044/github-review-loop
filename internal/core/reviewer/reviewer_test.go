@@ -239,6 +239,63 @@ func TestEvaluate_AllConversationsGoal_AllResolved(t *testing.T) {
 	assert.True(t, result.GoalMet)
 }
 
+func TestEvaluate_AllConversationsGoal_ActiveChangesRequestedGates(t *testing.T) {
+	t.Parallel()
+
+	// Every thread is resolved, but the reviewer's latest review still requests
+	// changes — they are formally blocking, so the goal is NOT met.
+	s := reviewer.Snapshot{
+		HeadCommitOID: "head1",
+		Triggers:      []reviewer.TriggerAction{{Reviewer: alice(), At: baseTime()}},
+		Reviews: []reviewer.Review{
+			{Reviewer: alice(), State: reviewer.ReviewStateChangesRequested, CommitOID: "head1", At: baseTime()},
+		},
+		Threads: []reviewer.Thread{{Reviewer: alice(), Resolved: true}},
+	}
+	result := reviewer.Evaluate(alicePolicy(reviewer.GoalAllConversationsResolved, 5), s)
+	assert.False(t, result.GoalMet, "active changes-requested must gate even with all threads resolved")
+	assert.True(t, result.ChangesRequested)
+}
+
+func TestEvaluate_AllConversationsGoal_CommentedDoesNotGate(t *testing.T) {
+	t.Parallel()
+
+	// A COMMENTED review does not block: with all threads resolved the goal is met.
+	s := reviewer.Snapshot{
+		HeadCommitOID: "head1",
+		Triggers:      []reviewer.TriggerAction{{Reviewer: alice(), At: baseTime()}},
+		Reviews: []reviewer.Review{
+			{Reviewer: alice(), State: reviewer.ReviewStateCommented, CommitOID: "head1", At: baseTime()},
+		},
+		Threads: []reviewer.Thread{{Reviewer: alice(), Resolved: true}},
+	}
+	result := reviewer.Evaluate(alicePolicy(reviewer.GoalAllConversationsResolved, 5), s)
+	assert.True(t, result.GoalMet)
+	assert.False(t, result.ChangesRequested)
+}
+
+func TestEvaluate_ChangesRequested_LatestReviewWins(t *testing.T) {
+	t.Parallel()
+
+	// An older changes-requested review superseded by a newer COMMENTED review is
+	// no longer blocking — only the latest non-pending review counts.
+	s := reviewer.Snapshot{
+		HeadCommitOID: "head2",
+		Triggers:      []reviewer.TriggerAction{{Reviewer: alice(), At: baseTime()}},
+		Reviews: []reviewer.Review{
+			{Reviewer: alice(), State: reviewer.ReviewStateChangesRequested, CommitOID: "head1", At: baseTime()},
+			{
+				Reviewer:  alice(),
+				State:     reviewer.ReviewStateCommented,
+				CommitOID: "head2",
+				At:        baseTime().Add(time.Hour),
+			},
+		},
+	}
+	result := reviewer.Evaluate(alicePolicy(reviewer.GoalAllConversationsResolved, 5), s)
+	assert.False(t, result.ChangesRequested, "newer COMMENTED review supersedes the older changes-requested")
+}
+
 func TestEvaluate_AllConversationsGoal_OneUnresolved(t *testing.T) {
 	t.Parallel()
 

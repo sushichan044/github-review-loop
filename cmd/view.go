@@ -143,9 +143,20 @@ func runViewReviewers(ctx context.Context, d deps, pr github.PR) error {
 	}
 
 	loopState := reviewer.EvaluateLoop(policies, snapshot)
-	view := buildLoopView(loopState, policies, allCommentsByKey)
+	view := buildLoopView(loopState, policies, allCommentsByKey, pr)
 
 	return output.Render(d.out, view)
+}
+
+// reviewBodyDrillIn returns a gh command that prints a single review's body
+// (pullrequestreview.body) via the REST API. Reviews are addressed by their
+// numeric databaseId. Returns "" when no review id is available.
+func reviewBodyDrillIn(pr github.PR, reviewID string) string {
+	if reviewID == "" {
+		return ""
+	}
+	return fmt.Sprintf("gh api repos/%s/%s/pulls/%d/reviews/%s --jq .body",
+		pr.Owner, pr.Repo, pr.Number, reviewID)
 }
 
 // buildLoopView maps a reviewer.LoopState into an output.LoopView.
@@ -153,6 +164,7 @@ func buildLoopView(
 	state reviewer.LoopState,
 	policies []reviewer.Policy,
 	allCommentsByKey map[string][]github.ThreadComment,
+	pr github.PR,
 ) output.LoopView {
 	policyByIdentity := make(map[reviewer.Identity]reviewer.Policy, len(policies))
 	for _, p := range policies {
@@ -188,6 +200,13 @@ func buildLoopView(
 			CanRerequest:       rs.CanRerequest,
 			BlockReason:        rs.BlockReason,
 			UnresolvedComments: unresolvedComments,
+			// Full mode: emit the body drill-in command so the agent can read the
+			// review body (findings not tied to any inline thread) on demand.
+			ChangesRequested:      rs.ChangesRequested,
+			LatestReviewState:     rs.LatestReviewState,
+			LatestReviewCommitOID: rs.LatestReviewCommitOID,
+			ReviewBodyPresent:     rs.LatestReviewBodyPresent,
+			ReviewBodyDrillInCmd:  reviewBodyDrillIn(pr, rs.LatestReviewID),
 		})
 	}
 
@@ -251,6 +270,12 @@ func buildConciseLoopView(
 			BlockReason:     rs.BlockReason,
 			UnresolvedCount: unresolvedCounts[key],
 			DrillInCmd:      reviewerCommentsDrillIn(rs.Identity, pr),
+			// Concise mode: surface that a review body exists, but point at the
+			// view command rather than emitting the body drill-in here.
+			ChangesRequested:      rs.ChangesRequested,
+			LatestReviewState:     rs.LatestReviewState,
+			LatestReviewCommitOID: rs.LatestReviewCommitOID,
+			ReviewBodyPresent:     rs.LatestReviewBodyPresent,
 		})
 	}
 

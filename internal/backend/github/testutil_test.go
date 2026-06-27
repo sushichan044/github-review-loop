@@ -70,6 +70,8 @@ type FakeReview struct {
 	State       string
 	CommitOid   string
 	SubmittedAt time.Time
+	Body        string
+	ID          string
 }
 
 // FakeReviewRequest is test data for a ReviewRequestedEvent timeline node.
@@ -128,6 +130,8 @@ func injectTimeline(
 		n.PullRequestReview.State = r.State
 		n.PullRequestReview.Commit.Oid = r.CommitOid
 		n.PullRequestReview.SubmittedAt = graphqlTime{r.SubmittedAt}
+		n.PullRequestReview.Body = r.Body
+		n.PullRequestReview.FullDatabaseID = r.ID
 		nodes = append(nodes, n)
 	}
 

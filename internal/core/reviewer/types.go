@@ -74,6 +74,15 @@ type Review struct {
 	State     ReviewState
 	CommitOID string
 	At        time.Time
+
+	// Body is the review-level comment body (pullrequestreview.body), which can
+	// carry findings not attached to any inline thread (e.g. CodeRabbit's
+	// "outside diff range" comments). Empty when the reviewer left no body.
+	Body string
+
+	// ID is the review's GitHub databaseId, used to build a drill-in command
+	// that reads this review's body.
+	ID string
 }
 
 // Thread represents a review-conversation thread attributed to a reviewer.
@@ -100,6 +109,20 @@ type State struct {
 	GoalMet      bool
 	CanRerequest bool
 	BlockReason  string
+
+	// ChangesRequested is true when the reviewer's latest non-pending review
+	// state is changes-requested. For a configured reviewer this gates the loop
+	// (the reviewer stays non-terminal) and is sticky until they re-review with a
+	// different state, matching GitHub's reviewDecision behavior.
+	ChangesRequested bool
+
+	// LatestReview* summarize the reviewer's most recent non-pending review for
+	// rendering (changes-requested handling and the review-body drill-in). They
+	// are zero when the reviewer has submitted no non-pending review.
+	LatestReviewState       ReviewState
+	LatestReviewCommitOID   string
+	LatestReviewID          string
+	LatestReviewBodyPresent bool
 }
 
 // LoopState is the aggregate result of evaluating all policies.

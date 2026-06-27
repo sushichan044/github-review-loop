@@ -97,6 +97,15 @@ func rallyCount(identity Identity, triggers []TriggerAction) int {
 	return count
 }
 
+// latestReviewIsChangesRequested reports whether the reviewer's latest
+// non-pending review requested changes. A changes-requested review is sticky on
+// GitHub: it keeps blocking until the reviewer submits another review with a
+// different state, regardless of new commits.
+func latestReviewIsChangesRequested(identity Identity, s Snapshot) bool {
+	latest, ok := latestNonPendingReview(identity, s.Reviews)
+	return ok && latest.State == ReviewStateChangesRequested
+}
+
 // goalMet evaluates whether the goal defined in policy p is satisfied.
 func goalMet(p Policy, s Snapshot) bool {
 	switch p.Goal {
@@ -114,6 +123,11 @@ func goalMet(p Policy, s Snapshot) bool {
 		// they must first submit a review or leave a thread, or the initial
 		// review request would never be fired.
 		if !isEngaged(p.Identity, s) {
+			return false
+		}
+		// An active changes-requested review gates the goal even when every
+		// inline thread is resolved: the reviewer is still formally blocking.
+		if latestReviewIsChangesRequested(p.Identity, s) {
 			return false
 		}
 		for _, t := range s.Threads {
@@ -172,13 +186,20 @@ func Evaluate(p Policy, s Snapshot) State {
 
 	canRerequest, blockReason := rerequestState(p, s, phase)
 
+	latest, hasLatest := latestNonPendingReview(p.Identity, s.Reviews)
+
 	return State{
-		Identity:     p.Identity,
-		Phase:        phase,
-		RallyCount:   count,
-		GoalMet:      met,
-		CanRerequest: canRerequest,
-		BlockReason:  blockReason,
+		Identity:                p.Identity,
+		Phase:                   phase,
+		RallyCount:              count,
+		GoalMet:                 met,
+		CanRerequest:            canRerequest,
+		BlockReason:             blockReason,
+		ChangesRequested:        hasLatest && latest.State == ReviewStateChangesRequested,
+		LatestReviewState:       latest.State,
+		LatestReviewCommitOID:   latest.CommitOID,
+		LatestReviewID:          latest.ID,
+		LatestReviewBodyPresent: hasLatest && strings.TrimSpace(latest.Body) != "",
 	}
 }
 
