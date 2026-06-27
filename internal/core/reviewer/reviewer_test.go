@@ -193,140 +193,154 @@ func TestEvaluate_ApprovedGoal_OtherReviewerDoesNotCount(t *testing.T) {
 	assert.False(t, result.GoalMet)
 }
 
-// ─── Goal: AllConversationsResolved ──────────────────────────────────────────
+// ─── Goal: ReviewedClean ─────────────────────────────────────────────────────
 
-func TestEvaluate_AllConversationsGoal_NoThreads_NeverEngaged(t *testing.T) {
+func TestEvaluate_ReviewedClean_NoReview_NotMet(t *testing.T) {
 	t.Parallel()
 
-	// No reviews and no threads → never engaged → goal NOT vacuously met.
-	s := reviewer.Snapshot{
-		HeadCommitOID: "head1",
-		Reviews:       []reviewer.Review{},
-		Threads:       []reviewer.Thread{},
-	}
-	result := reviewer.Evaluate(alicePolicy(reviewer.GoalAllConversationsResolved, 5), s)
+	// No non-pending review → the reviewer has not signed off → not met.
+	s := reviewer.Snapshot{HeadCommitOID: "head1"}
+	result := reviewer.Evaluate(alicePolicy(reviewer.GoalReviewedClean, 5), s)
 	assert.False(t, result.GoalMet)
 }
 
-func TestEvaluate_AllConversationsGoal_NoThreads_EngagedByReview(t *testing.T) {
+func TestEvaluate_ReviewedClean_CommentedZeroInlineOnHead_Met(t *testing.T) {
 	t.Parallel()
 
-	// Has a non-pending review (engaged) but no threads → all resolved → goal met.
+	// A COMMENTED review on the current head with no inline findings is a clean
+	// sign-off → met. Threads are irrelevant to this goal.
 	s := reviewer.Snapshot{
 		HeadCommitOID: "head1",
 		Reviews: []reviewer.Review{
-			{Reviewer: alice(), State: reviewer.ReviewStateCommented, CommitOID: "head1", At: baseTime()},
-		},
-		Threads: []reviewer.Thread{},
-	}
-	result := reviewer.Evaluate(alicePolicy(reviewer.GoalAllConversationsResolved, 5), s)
-	assert.True(t, result.GoalMet)
-}
-
-func TestEvaluate_AllConversationsGoal_AllResolved(t *testing.T) {
-	t.Parallel()
-
-	s := reviewer.Snapshot{
-		HeadCommitOID: "head1",
-		Triggers:      []reviewer.TriggerAction{{Reviewer: alice(), At: baseTime()}},
-		Reviews:       []reviewer.Review{},
-		Threads: []reviewer.Thread{
-			{Reviewer: alice(), Resolved: true},
-			{Reviewer: alice(), Resolved: true},
-		},
-	}
-	result := reviewer.Evaluate(alicePolicy(reviewer.GoalAllConversationsResolved, 5), s)
-	assert.True(t, result.GoalMet)
-}
-
-func TestEvaluate_AllConversationsGoal_ActiveChangesRequestedGates(t *testing.T) {
-	t.Parallel()
-
-	// Every thread is resolved, but the reviewer's latest review still requests
-	// changes — they are formally blocking, so the goal is NOT met.
-	s := reviewer.Snapshot{
-		HeadCommitOID: "head1",
-		Triggers:      []reviewer.TriggerAction{{Reviewer: alice(), At: baseTime()}},
-		Reviews: []reviewer.Review{
-			{Reviewer: alice(), State: reviewer.ReviewStateChangesRequested, CommitOID: "head1", At: baseTime()},
-		},
-		Threads: []reviewer.Thread{{Reviewer: alice(), Resolved: true}},
-	}
-	result := reviewer.Evaluate(alicePolicy(reviewer.GoalAllConversationsResolved, 5), s)
-	assert.False(t, result.GoalMet, "active changes-requested must gate even with all threads resolved")
-	assert.True(t, result.ChangesRequested)
-}
-
-func TestEvaluate_AllConversationsGoal_CommentedDoesNotGate(t *testing.T) {
-	t.Parallel()
-
-	// A COMMENTED review does not block: with all threads resolved the goal is met.
-	s := reviewer.Snapshot{
-		HeadCommitOID: "head1",
-		Triggers:      []reviewer.TriggerAction{{Reviewer: alice(), At: baseTime()}},
-		Reviews: []reviewer.Review{
-			{Reviewer: alice(), State: reviewer.ReviewStateCommented, CommitOID: "head1", At: baseTime()},
-		},
-		Threads: []reviewer.Thread{{Reviewer: alice(), Resolved: true}},
-	}
-	result := reviewer.Evaluate(alicePolicy(reviewer.GoalAllConversationsResolved, 5), s)
-	assert.True(t, result.GoalMet)
-	assert.False(t, result.ChangesRequested)
-}
-
-func TestEvaluate_ChangesRequested_LatestReviewWins(t *testing.T) {
-	t.Parallel()
-
-	// An older changes-requested review superseded by a newer COMMENTED review is
-	// no longer blocking — only the latest non-pending review counts.
-	s := reviewer.Snapshot{
-		HeadCommitOID: "head2",
-		Triggers:      []reviewer.TriggerAction{{Reviewer: alice(), At: baseTime()}},
-		Reviews: []reviewer.Review{
-			{Reviewer: alice(), State: reviewer.ReviewStateChangesRequested, CommitOID: "head1", At: baseTime()},
 			{
-				Reviewer:  alice(),
-				State:     reviewer.ReviewStateCommented,
-				CommitOID: "head2",
-				At:        baseTime().Add(time.Hour),
+				Reviewer:           alice(),
+				State:              reviewer.ReviewStateCommented,
+				CommitOID:          "head1",
+				At:                 baseTime(),
+				InlineCommentCount: 0,
+			},
+		},
+		Threads: []reviewer.Thread{{Reviewer: alice(), Resolved: false}}, // unresolved, but ignored
+	}
+	result := reviewer.Evaluate(alicePolicy(reviewer.GoalReviewedClean, 5), s)
+	assert.True(t, result.GoalMet)
+}
+
+func TestEvaluate_ReviewedClean_CommentedWithInlineComments_NotMet(t *testing.T) {
+	t.Parallel()
+
+	// A review on head that left inline findings is not a clean sign-off.
+	s := reviewer.Snapshot{
+		HeadCommitOID: "head1",
+		Reviews: []reviewer.Review{
+			{
+				Reviewer:           alice(),
+				State:              reviewer.ReviewStateCommented,
+				CommitOID:          "head1",
+				At:                 baseTime(),
+				InlineCommentCount: 3,
 			},
 		},
 	}
-	result := reviewer.Evaluate(alicePolicy(reviewer.GoalAllConversationsResolved, 5), s)
-	assert.False(t, result.ChangesRequested, "newer COMMENTED review supersedes the older changes-requested")
-}
-
-func TestEvaluate_AllConversationsGoal_OneUnresolved(t *testing.T) {
-	t.Parallel()
-
-	s := reviewer.Snapshot{
-		HeadCommitOID: "head1",
-		Triggers:      []reviewer.TriggerAction{{Reviewer: alice(), At: baseTime()}},
-		Reviews:       []reviewer.Review{},
-		Threads: []reviewer.Thread{
-			{Reviewer: alice(), Resolved: true},
-			{Reviewer: alice(), Resolved: false},
-		},
-	}
-	result := reviewer.Evaluate(alicePolicy(reviewer.GoalAllConversationsResolved, 5), s)
+	result := reviewer.Evaluate(alicePolicy(reviewer.GoalReviewedClean, 5), s)
 	assert.False(t, result.GoalMet)
 }
 
-func TestEvaluate_AllConversationsGoal_OtherReviewerThreadDoesNotCount(t *testing.T) {
+func TestEvaluate_ReviewedClean_ApprovedOnHead_Met(t *testing.T) {
 	t.Parallel()
 
-	// Bob has an unresolved thread; Alice should still be GoalMet
+	// An approval on head meets the goal even if that review carried inline notes.
 	s := reviewer.Snapshot{
 		HeadCommitOID: "head1",
-		Triggers:      []reviewer.TriggerAction{{Reviewer: alice(), At: baseTime()}},
-		Reviews:       []reviewer.Review{},
-		Threads: []reviewer.Thread{
-			{Reviewer: alice(), Resolved: true},
-			{Reviewer: bob(), Resolved: false}, // Bob's — irrelevant to Alice's policy
+		Reviews: []reviewer.Review{
+			{
+				Reviewer:           alice(),
+				State:              reviewer.ReviewStateApproved,
+				CommitOID:          "head1",
+				At:                 baseTime(),
+				InlineCommentCount: 2,
+			},
 		},
 	}
-	result := reviewer.Evaluate(alicePolicy(reviewer.GoalAllConversationsResolved, 5), s)
+	result := reviewer.Evaluate(alicePolicy(reviewer.GoalReviewedClean, 5), s)
 	assert.True(t, result.GoalMet)
+}
+
+func TestEvaluate_ReviewedClean_CleanReviewOnOldCommit_NotMet(t *testing.T) {
+	t.Parallel()
+
+	// A clean review of an older commit is stale once new commits are pushed.
+	s := reviewer.Snapshot{
+		HeadCommitOID: "head2",
+		Reviews: []reviewer.Review{
+			{
+				Reviewer:           alice(),
+				State:              reviewer.ReviewStateCommented,
+				CommitOID:          "head1",
+				At:                 baseTime(),
+				InlineCommentCount: 0,
+			},
+		},
+	}
+	result := reviewer.Evaluate(alicePolicy(reviewer.GoalReviewedClean, 5), s)
+	assert.False(t, result.GoalMet, "clean review must be on the current head")
+}
+
+func TestEvaluate_ReviewedClean_ChangesRequestedOnHead_NotMetAndFlagged(t *testing.T) {
+	t.Parallel()
+
+	s := reviewer.Snapshot{
+		HeadCommitOID: "head1",
+		Reviews: []reviewer.Review{
+			{
+				Reviewer:           alice(),
+				State:              reviewer.ReviewStateChangesRequested,
+				CommitOID:          "head1",
+				At:                 baseTime(),
+				InlineCommentCount: 0,
+			},
+		},
+	}
+	result := reviewer.Evaluate(alicePolicy(reviewer.GoalReviewedClean, 5), s)
+	assert.False(t, result.GoalMet, "changes-requested is never a clean sign-off")
+	assert.True(t, result.ChangesRequested)
+}
+
+func TestEvaluate_ReviewedClean_LatestReviewWins(t *testing.T) {
+	t.Parallel()
+
+	// An older changes-requested review superseded by a newer clean review on head
+	// → met; only the latest non-pending review counts.
+	s := reviewer.Snapshot{
+		HeadCommitOID: "head2",
+		Reviews: []reviewer.Review{
+			{Reviewer: alice(), State: reviewer.ReviewStateChangesRequested, CommitOID: "head1", At: baseTime()},
+			{
+				Reviewer:           alice(),
+				State:              reviewer.ReviewStateCommented,
+				CommitOID:          "head2",
+				At:                 baseTime().Add(time.Hour),
+				InlineCommentCount: 0,
+			},
+		},
+	}
+	result := reviewer.Evaluate(alicePolicy(reviewer.GoalReviewedClean, 5), s)
+	assert.True(t, result.GoalMet)
+	assert.False(t, result.ChangesRequested, "newer clean review supersedes the older changes-requested")
+}
+
+func TestEvaluate_ReviewedClean_OtherReviewerDoesNotCount(t *testing.T) {
+	t.Parallel()
+
+	// Only the policy reviewer's own reviews count.
+	s := reviewer.Snapshot{
+		HeadCommitOID: "head1",
+		Reviews: []reviewer.Review{
+			{Reviewer: bob(), State: reviewer.ReviewStateApproved, CommitOID: "head1", At: baseTime()},
+		},
+	}
+	result := reviewer.Evaluate(alicePolicy(reviewer.GoalReviewedClean, 5), s)
+	assert.False(t, result.GoalMet)
 }
 
 // ─── Phase transitions ────────────────────────────────────────────────────────

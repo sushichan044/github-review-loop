@@ -41,8 +41,8 @@ var ErrConfigExists = errors.New("config: file already exists")
 
 // GoalConfig holds the two mutually exclusive goal flags as parsed from YAML.
 type GoalConfig struct {
-	Approved                 bool `zog:"approved"`
-	AllConversationsResolved bool `zog:"all-conversations-resolved"`
+	Approved      bool `zog:"approved"`
+	ReviewedClean bool `zog:"reviewed-clean"`
 }
 
 // ReviewerConfig is a single reviewer entry.
@@ -74,16 +74,16 @@ type Config struct {
 
 func buildSchema() *z.StructSchema {
 	goalSchema := z.Struct(z.Shape{
-		"Approved":                 z.Bool(),
-		"AllConversationsResolved": z.Bool(),
+		"Approved":      z.Bool(),
+		"ReviewedClean": z.Bool(),
 	}).TestFunc(func(dataPtr any, ctx z.Ctx) bool {
 		g, ok := dataPtr.(*GoalConfig)
 		if !ok {
 			return false
 		}
-		if g.Approved == g.AllConversationsResolved {
+		if g.Approved == g.ReviewedClean {
 			ctx.AddIssue(
-				ctx.Issue().SetMessage("exactly one of 'approved' or 'all-conversations-resolved' must be true"),
+				ctx.Issue().SetMessage("exactly one of 'approved' or 'reviewed-clean' must be true"),
 			)
 			return false
 		}
@@ -274,8 +274,8 @@ func mapGoal(g GoalConfig) (reviewer.Goal, error) {
 	switch {
 	case g.Approved:
 		return reviewer.GoalApproved, nil
-	case g.AllConversationsResolved:
-		return reviewer.GoalAllConversationsResolved, nil
+	case g.ReviewedClean:
+		return reviewer.GoalReviewedClean, nil
 	default:
 		// Defensive dead code: zog validation rejects configs with no goal set.
 		return "", errors.New("config: goal has no valid flag set")

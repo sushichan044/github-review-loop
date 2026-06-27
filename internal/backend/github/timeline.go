@@ -51,12 +51,13 @@ type requestedReviewerUnion struct {
 }
 
 type pullRequestReviewEvent struct {
-	AuthorLogin string
-	State       string
-	CommitOID   string
-	SubmittedAt time.Time
-	Body        string
-	ID          string
+	AuthorLogin        string
+	State              string
+	CommitOID          string
+	SubmittedAt        time.Time
+	Body               string
+	ID                 string
+	InlineCommentCount int
 }
 
 type pullRequestCommitEvent struct {
@@ -109,7 +110,10 @@ type prTimelineNode struct {
 		SubmittedAt    graphqlTime
 		Body           string
 		FullDatabaseID string `graphql:"fullDatabaseId"`
-		Commit         struct {
+		Comments       struct {
+			TotalCount int
+		} `graphql:"comments"`
+		Commit struct {
 			Oid string
 		}
 	} `graphql:"... on PullRequestReview"`
@@ -212,12 +216,13 @@ func convertTimelineNode(n prTimelineNode) timelineNode {
 		}
 	case "PullRequestReview":
 		node.PullRequestReview = &pullRequestReviewEvent{
-			AuthorLogin: n.PullRequestReview.Author.Login,
-			State:       n.PullRequestReview.State,
-			CommitOID:   n.PullRequestReview.Commit.Oid,
-			SubmittedAt: n.PullRequestReview.SubmittedAt.Time,
-			Body:        n.PullRequestReview.Body,
-			ID:          n.PullRequestReview.FullDatabaseID,
+			AuthorLogin:        n.PullRequestReview.Author.Login,
+			State:              n.PullRequestReview.State,
+			CommitOID:          n.PullRequestReview.Commit.Oid,
+			SubmittedAt:        n.PullRequestReview.SubmittedAt.Time,
+			Body:               n.PullRequestReview.Body,
+			ID:                 n.PullRequestReview.FullDatabaseID,
+			InlineCommentCount: n.PullRequestReview.Comments.TotalCount,
 		}
 	case "PullRequestCommit":
 		node.PullRequestCommit = &pullRequestCommitEvent{

@@ -58,7 +58,7 @@ github:
   rulesets: true
   reviewers:
     - type: github-copilot
-      goal: { all-conversations-resolved: true }
+      goal: { reviewed-clean: true }
       max-rallies: 5
 ```
 

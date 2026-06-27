@@ -71,21 +71,6 @@ func hasOutstandingRequest(identity Identity, s Snapshot) bool {
 	return latestTrig.At.After(latestReview.At)
 }
 
-// isEngaged returns true when the reviewer has at least one non-pending review
-// or at least one thread attributed to them. An unengaged reviewer cannot have
-// GoalAllConversationsResolved declared vacuously met.
-func isEngaged(identity Identity, s Snapshot) bool {
-	if _, ok := latestNonPendingReview(identity, s.Reviews); ok {
-		return true
-	}
-	for _, t := range s.Threads {
-		if identityMatches(t.Reviewer, identity) {
-			return true
-		}
-	}
-	return false
-}
-
 // rallyCount counts TriggerActions whose Reviewer matches identity.
 func rallyCount(identity Identity, triggers []TriggerAction) int {
 	count := 0
@@ -97,45 +82,32 @@ func rallyCount(identity Identity, triggers []TriggerAction) int {
 	return count
 }
 
-// latestReviewIsChangesRequested reports whether the reviewer's latest
-// non-pending review requested changes. A changes-requested review is sticky on
-// GitHub: it keeps blocking until the reviewer submits another review with a
-// different state, regardless of new commits.
-func latestReviewIsChangesRequested(identity Identity, s Snapshot) bool {
-	latest, ok := latestNonPendingReview(identity, s.Reviews)
-	return ok && latest.State == ReviewStateChangesRequested
-}
-
-// goalMet evaluates whether the goal defined in policy p is satisfied.
+// goalMet evaluates whether the goal defined in policy p is satisfied. Both
+// goals require the qualifying review to be on the current head: a review of an
+// older commit is stale once new commits are pushed.
 func goalMet(p Policy, s Snapshot) bool {
+	latest, ok := latestNonPendingReview(p.Identity, s.Reviews)
+	if !ok || latest.CommitOID != s.HeadCommitOID {
+		return false
+	}
+
 	switch p.Goal {
 	case GoalApproved:
-		latest, ok := latestNonPendingReview(p.Identity, s.Reviews)
-		if !ok {
-			return false
-		}
-		// Require approval on the current head — an approval on an older commit
-		// is stale (reviewer returns to active after new commits).
-		return latest.State == ReviewStateApproved && latest.CommitOID == s.HeadCommitOID
+		return latest.State == ReviewStateApproved
 
-	case GoalAllConversationsResolved:
-		// An unengaged reviewer cannot have their goal declared met vacuously:
-		// they must first submit a review or leave a thread, or the initial
-		// review request would never be fired.
-		if !isEngaged(p.Identity, s) {
+	case GoalReviewedClean:
+		// The reviewer looked at the current head and signed off: either an
+		// approval, or a non-changes-requested review with no inline findings.
+		// Resolving threads is NOT enough — the reviewer must re-review cleanly.
+		switch latest.State {
+		case ReviewStateApproved:
+			return true
+		case ReviewStateCommented:
+			return latest.InlineCommentCount == 0
+		case ReviewStateChangesRequested, ReviewStateDismissed, ReviewStatePending:
 			return false
 		}
-		// An active changes-requested review gates the goal even when every
-		// inline thread is resolved: the reviewer is still formally blocking.
-		if latestReviewIsChangesRequested(p.Identity, s) {
-			return false
-		}
-		for _, t := range s.Threads {
-			if identityMatches(t.Reviewer, p.Identity) && !t.Resolved {
-				return false
-			}
-		}
-		return true
+		return false
 
 	default:
 		return false

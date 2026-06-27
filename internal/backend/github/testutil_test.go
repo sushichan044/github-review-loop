@@ -66,12 +66,13 @@ func injectPRMergeResult(q any, r FakePRMergeResult) {
 
 // FakeReview is test data for a PullRequestReview timeline node.
 type FakeReview struct {
-	AuthorLogin string
-	State       string
-	CommitOid   string
-	SubmittedAt time.Time
-	Body        string
-	ID          string
+	AuthorLogin        string
+	State              string
+	CommitOid          string
+	SubmittedAt        time.Time
+	Body               string
+	ID                 string
+	InlineCommentCount int
 }
 
 // FakeReviewRequest is test data for a ReviewRequestedEvent timeline node.
@@ -132,6 +133,7 @@ func injectTimeline(
 		n.PullRequestReview.SubmittedAt = graphqlTime{r.SubmittedAt}
 		n.PullRequestReview.Body = r.Body
 		n.PullRequestReview.FullDatabaseID = r.ID
+		n.PullRequestReview.Comments.TotalCount = r.InlineCommentCount
 		nodes = append(nodes, n)
 	}
 

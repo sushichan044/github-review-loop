@@ -12,10 +12,14 @@
 #
 #   # reviewers: reviewer-quality loop (opt-in, empty by default).
 #   # Each entry loops until the reviewer reaches their goal or exhausts max-rallies.
+#   # goal (exactly one):
+#   #   approved: true        # reviewer approved the current head
+#   #   reviewed-clean: true  # reviewer signed off on the current head with no
+#   #                         # inline findings (approved, or commented with 0 inline)
 #   reviewers:
 #     - type: github-copilot
 #       goal:
-#         all-conversations-resolved: true
+#         reviewed-clean: true
 #       max-rallies: 5
 #
 #     # - type: github-app

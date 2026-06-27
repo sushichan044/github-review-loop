@@ -23,7 +23,7 @@ github:
   reviewers:
     - type: github-copilot
       goal:
-        all-conversations-resolved: true
+        reviewed-clean: true
       max-rallies: 5
     
 
@@ -36,6 +36,6 @@ github:
     - type: github-app
       name: coderabbitai
       goal:
-        all-conversations-resolved: true
+        reviewed-clean: true
       max-rallies: 5
       trigger: "@coderabbitai review"

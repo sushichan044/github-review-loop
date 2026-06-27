@@ -94,7 +94,7 @@ func TestRender_FullMode_ShowsCommentBodies(t *testing.T) {
 	t.Parallel()
 
 	out := renderString(t, output.LoopView{Reviewers: []output.ReviewerView{{
-		Identity: aliceIdentity(), Goal: reviewer.GoalAllConversationsResolved,
+		Identity: aliceIdentity(), Goal: reviewer.GoalReviewedClean,
 		Phase: reviewer.PhaseActive, RallyCount: 1, MaxRallies: 3,
 		UnresolvedComments: []output.CommentView{
 			{Author: "alice", Body: "This looks wrong here.", URL: "https://example.com/c/1", At: time.Now()},
@@ -109,7 +109,7 @@ func TestRender_ConciseMode_ShowsCountAndDrillIn_NotBodies(t *testing.T) {
 
 	const drillIn = "gh api graphql -f query='...' --jq '...'"
 	out := renderString(t, output.LoopView{Reviewers: []output.ReviewerView{{
-		Identity: aliceIdentity(), Goal: reviewer.GoalAllConversationsResolved,
+		Identity: aliceIdentity(), Goal: reviewer.GoalReviewedClean,
 		Phase: reviewer.PhaseActive, RallyCount: 1, MaxRallies: 3,
 		UnresolvedCount: 5, DrillInCmd: drillIn,
 		// UnresolvedComments deliberately empty — concise mode.
@@ -123,7 +123,7 @@ func TestRender_Active_WithUnresolved_NextActionIsResolveNotRerequest(t *testing
 	t.Parallel()
 
 	out := renderString(t, output.LoopView{Reviewers: []output.ReviewerView{{
-		Identity: aliceIdentity(), Goal: reviewer.GoalAllConversationsResolved,
+		Identity: aliceIdentity(), Goal: reviewer.GoalReviewedClean,
 		Phase: reviewer.PhaseActive, RallyCount: 1, MaxRallies: 5, CanRerequest: true,
 		UnresolvedCount: 2, DrillInCmd: "gh api graphql ...",
 	}}})
@@ -180,7 +180,7 @@ func TestRender_ReviewBody_ConciseMode_PointsAtViewCommand(t *testing.T) {
 	t.Parallel()
 
 	out := renderString(t, output.LoopView{Reviewers: []output.ReviewerView{{
-		Identity: aliceIdentity(), Goal: reviewer.GoalAllConversationsResolved,
+		Identity: aliceIdentity(), Goal: reviewer.GoalReviewedClean,
 		Phase: reviewer.PhaseGoalMet, GoalMet: true,
 		LatestReviewState: reviewer.ReviewStateCommented, LatestReviewCommitOID: "abc1234567",
 		ReviewBodyPresent: true, // ReviewBodyDrillInCmd empty → concise mode
@@ -196,7 +196,7 @@ func TestRender_ReviewBody_FullMode_ShowsDrillIn(t *testing.T) {
 
 	const drillIn = "gh api repos/o/r/pulls/3/reviews/123 --jq .body"
 	out := renderString(t, output.LoopView{Reviewers: []output.ReviewerView{{
-		Identity: aliceIdentity(), Goal: reviewer.GoalAllConversationsResolved,
+		Identity: aliceIdentity(), Goal: reviewer.GoalReviewedClean,
 		Phase: reviewer.PhaseGoalMet, GoalMet: true,
 		LatestReviewState: reviewer.ReviewStateCommented,
 		ReviewBodyPresent: true, ReviewBodyDrillInCmd: drillIn,

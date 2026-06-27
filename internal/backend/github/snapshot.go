@@ -112,12 +112,13 @@ func applyPullRequestReview(
 		return
 	}
 	snapshot.Reviews = append(snapshot.Reviews, reviewer.Review{
-		Reviewer:  identity,
-		State:     mapReviewState(r.State),
-		CommitOID: r.CommitOID,
-		At:        r.SubmittedAt,
-		Body:      r.Body,
-		ID:        r.ID,
+		Reviewer:           identity,
+		State:              mapReviewState(r.State),
+		CommitOID:          r.CommitOID,
+		At:                 r.SubmittedAt,
+		Body:               r.Body,
+		ID:                 r.ID,
+		InlineCommentCount: r.InlineCommentCount,
 	})
 }
 

@@ -75,7 +75,7 @@ github:
       max-rallies: 3
     - type: github-copilot
       goal:
-        all-conversations-resolved: true
+        reviewed-clean: true
       max-rallies: 5
 `)
 }
@@ -150,7 +150,7 @@ func TestCheck_WithReviewerLoop_NotDone_ReturnsErrBlocked(t *testing.T) {
 	// BundledEvaluate returns no blockers, but reviewer loop is not done.
 	snapshot := reviewer.Snapshot{
 		HeadCommitOID: "head123",
-		// No reviews → copilot goal (all-conversations-resolved) NOT met.
+		// No reviews → copilot goal (reviewed-clean) NOT met.
 		Threads: []reviewer.Thread{
 			{Reviewer: reviewer.Identity{Type: reviewer.ReviewerTypeGitHubCopilot}, Resolved: false},
 		},
@@ -184,15 +184,18 @@ func TestCheck_WithReviewerLoop_Done_ExitsZero(t *testing.T) {
 	aliceIdentity := reviewer.Identity{Type: reviewer.ReviewerTypeUser, Name: "alice"}
 	copilotIdentity := reviewer.Identity{Type: reviewer.ReviewerTypeGitHubCopilot}
 
-	// alice approved, copilot has no unresolved threads → loop done.
+	// alice approved on head, copilot left a clean review on head (0 inline) →
+	// both goals met → loop done.
 	snapshot := reviewer.Snapshot{
 		HeadCommitOID: "head123",
 		Reviews: []reviewer.Review{
 			{Reviewer: aliceIdentity, State: reviewer.ReviewStateApproved, CommitOID: "head123"},
-		},
-		// No threads for copilot → all-conversations-resolved = true.
-		Threads: []reviewer.Thread{
-			{Reviewer: copilotIdentity, Resolved: true},
+			{
+				Reviewer:           copilotIdentity,
+				State:              reviewer.ReviewStateCommented,
+				CommitOID:          "head123",
+				InlineCommentCount: 0,
+			},
 		},
 	}
 

@@ -43,7 +43,7 @@ github:
 	assert.Equal(t, "user", r.Type)
 	assert.Equal(t, "alice", r.Name)
 	assert.True(t, r.Goal.Approved)
-	assert.False(t, r.Goal.AllConversationsResolved)
+	assert.False(t, r.Goal.ReviewedClean)
 	assert.Equal(t, 3, r.MaxRallies)
 	assert.Equal(t, "ping @alice", r.Trigger)
 }
@@ -55,7 +55,7 @@ func TestParse_CopilotReviewer(t *testing.T) {
 github:
   reviewers:
     - type: github-copilot
-      goal: { all-conversations-resolved: true }
+      goal: { reviewed-clean: true }
 `
 	cfg, err := config.Parse([]byte(yaml))
 	require.NoError(t, err)
@@ -65,7 +65,7 @@ github:
 	assert.Equal(t, "github-copilot", r.Type)
 	assert.Empty(t, r.Name)
 	assert.False(t, r.Goal.Approved)
-	assert.True(t, r.Goal.AllConversationsResolved)
+	assert.True(t, r.Goal.ReviewedClean)
 }
 
 func TestParse_DefaultMaxRallies(t *testing.T) {
@@ -75,7 +75,7 @@ func TestParse_DefaultMaxRallies(t *testing.T) {
 github:
   reviewers:
     - type: github-copilot
-      goal: { all-conversations-resolved: true }
+      goal: { reviewed-clean: true }
 `
 	cfg, err := config.Parse([]byte(yaml))
 	require.NoError(t, err)
@@ -104,7 +104,7 @@ func TestParse_GitDefaultsWhenOnlyGithubSectionPresent(t *testing.T) {
 github:
   reviewers:
     - type: github-copilot
-      goal: { all-conversations-resolved: true }
+      goal: { reviewed-clean: true }
 `
 	cfg, err := config.Parse([]byte(yaml))
 	require.NoError(t, err)
@@ -144,7 +144,7 @@ github:
   reviewers:
     - type: user
       name: alice
-      goal: { approved: true, all-conversations-resolved: true }
+      goal: { approved: true, reviewed-clean: true }
 `
 	_, err := config.Parse([]byte(yaml))
 	assert.Error(t, err)
@@ -224,7 +224,7 @@ func TestPolicies_MapsEachReviewer(t *testing.T) {
 				{Type: "user", Name: "alice", Goal: config.GoalConfig{Approved: true}, MaxRallies: 3},
 				{
 					Type:       "github-copilot",
-					Goal:       config.GoalConfig{AllConversationsResolved: true},
+					Goal:       config.GoalConfig{ReviewedClean: true},
 					MaxRallies: 5,
 				},
 			},
@@ -237,7 +237,7 @@ func TestPolicies_MapsEachReviewer(t *testing.T) {
 	assert.Equal(t, makePolicy("user", "alice", reviewer.GoalApproved, 3, ""), policies[0])
 	assert.Equal(
 		t,
-		makePolicy("github-copilot", "", reviewer.GoalAllConversationsResolved, 5, ""),
+		makePolicy("github-copilot", "", reviewer.GoalReviewedClean, 5, ""),
 		policies[1],
 	)
 }
@@ -264,9 +264,9 @@ func TestPolicies_GoalMapping(t *testing.T) {
 			wantGoal: reviewer.GoalApproved,
 		},
 		{
-			name:     "all-conversations-resolved",
-			goal:     config.GoalConfig{AllConversationsResolved: true},
-			wantGoal: reviewer.GoalAllConversationsResolved,
+			name:     "reviewed-clean",
+			goal:     config.GoalConfig{ReviewedClean: true},
+			wantGoal: reviewer.GoalReviewedClean,
 		},
 	}
 
@@ -341,7 +341,7 @@ func TestLoad_ValidFile(t *testing.T) {
 github:
   reviewers:
     - type: github-copilot
-      goal: { all-conversations-resolved: true }
+      goal: { reviewed-clean: true }
 `
 	start := gitRepoWithConfig(t, ".mergeable-please.yml", content, "")
 
@@ -358,7 +358,7 @@ func TestLoad_YamlExtensionAccepted(t *testing.T) {
 github:
   reviewers:
     - type: github-copilot
-      goal: { all-conversations-resolved: true }
+      goal: { reviewed-clean: true }
 `
 	start := gitRepoWithConfig(t, ".mergeable-please.yaml", content, "")
 
@@ -374,7 +374,7 @@ func TestLoad_FoundFromSubdirectory(t *testing.T) {
 github:
   reviewers:
     - type: github-copilot
-      goal: { all-conversations-resolved: true }
+      goal: { reviewed-clean: true }
 `
 	start := gitRepoWithConfig(t, ".mergeable-please.yml", content, filepath.Join("pkg", "deep"))
 

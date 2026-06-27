@@ -22,11 +22,15 @@ type Identity struct {
 type Goal string
 
 const (
-	// GoalApproved is met when the reviewer's latest non-pending review is Approved.
+	// GoalApproved is met when the reviewer's latest non-pending review on the
+	// current head is Approved.
 	GoalApproved Goal = "approved"
 
-	// GoalAllConversationsResolved is met when the reviewer has no unresolved threads.
-	GoalAllConversationsResolved Goal = "all-conversations-resolved"
+	// GoalReviewedClean is met when the reviewer's latest non-pending review on the
+	// current head signs off with no outstanding inline findings: either Approved,
+	// or Commented with zero inline comments. Resolving threads is not sufficient —
+	// the reviewer must re-review the latest commit cleanly.
+	GoalReviewedClean Goal = "reviewed-clean"
 )
 
 // Policy describes the loop behavior for one reviewer.
@@ -83,6 +87,11 @@ type Review struct {
 	// ID is the review's GitHub databaseId, used to build a drill-in command
 	// that reads this review's body.
 	ID string
+
+	// InlineCommentCount is the number of inline review comments attached to this
+	// review submission. Zero means the reviewer left no inline findings — a
+	// "clean" review.
+	InlineCommentCount int
 }
 
 // Thread represents a review-conversation thread attributed to a reviewer.
