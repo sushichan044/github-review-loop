@@ -75,18 +75,42 @@ type prMergeabilityQueryStruct struct {
 //
 //nolint:revive // "GitHubBackend" stutter is intentional: the package is named github.
 type GitHubBackend struct {
-	client       *Client
-	retrySleeper func(time.Duration)
-	retryCount   int
+	client     *Client
+	retryWait  func(context.Context, time.Duration) error
+	retryCount int
 }
 
 // backendOption configures a GitHubBackend.
 type backendOption func(*GitHubBackend)
 
+// sleepWithContext waits for d or until ctx is done, whichever comes first.
+// Unlike [time.Sleep] it returns promptly with ctx.Err() on cancellation, so a
+// canceled CLI does not sit through the full retry delay.
+func sleepWithContext(ctx context.Context, d time.Duration) error {
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
+}
+
 // withRetrySleeper injects a custom sleep function used between UNKNOWN retries.
-// The default is [time.Sleep]. Use a no-op for tests.
+// It is wrapped so the wait still honors cancellation: ctx is checked before and
+// after the injected sleep. The default wait is [sleepWithContext]. Use a no-op
+// for tests.
 func withRetrySleeper(fn func(time.Duration)) backendOption {
-	return func(b *GitHubBackend) { b.retrySleeper = fn }
+	return func(b *GitHubBackend) {
+		b.retryWait = func(ctx context.Context, d time.Duration) error {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			fn(d)
+			return ctx.Err()
+		}
+	}
 }
 
 // withRetryCount sets the maximum number of sleeps between UNKNOWN retries.
@@ -98,9 +122,9 @@ func withRetryCount(n int) backendOption {
 // newBackend creates a GitHubBackend using the given client.
 func newBackend(client *Client, opts ...backendOption) *GitHubBackend {
 	b := &GitHubBackend{
-		client:       client,
-		retrySleeper: time.Sleep,
-		retryCount:   defaultRetryCount,
+		client:     client,
+		retryWait:  sleepWithContext,
+		retryCount: defaultRetryCount,
 	}
 	for _, o := range opts {
 		o(b)
@@ -139,7 +163,9 @@ func (b *GitHubBackend) BundledEvaluate(ctx context.Context, pr backend.PRCoords
 		if (mergeable != mergeableUnknown && mergeState != mergeableUnknown) || attempt >= b.retryCount {
 			break
 		}
-		b.retrySleeper(defaultRetryDelay)
+		if err := b.retryWait(ctx, defaultRetryDelay); err != nil {
+			return core.CheckResult{}, fmt.Errorf("mergeability retry interrupted: %w", err)
+		}
 	}
 
 	var result core.CheckResult
@@ -158,12 +184,23 @@ func (b *GitHubBackend) FetchBranchRules(ctx context.Context, pr backend.PRCoord
 
 // ── Attribution ladder ───────────────────────────────────────────────────────
 
+// baseRemoteRef returns the remote-tracking ref for the PR base branch (e.g.
+// "origin/main") so the suggested git commands are copy/paste-ready. It falls
+// back to a placeholder when the base branch name is unknown.
+func baseRemoteRef(baseRefName string) string {
+	if baseRefName == "" {
+		return "origin/<base>"
+	}
+	return "origin/" + baseRefName
+}
+
 // attributeResult applies the plan's attribution ladder to populate result
 // Blockers and Advisories based on the query response.
 func attributeResult(result *core.CheckResult, q prMergeabilityQueryStruct, prNumber int) {
 	mergeable := q.Repository.PullRequest.Mergeable
 	mergeState := q.Repository.PullRequest.MergeStateStatus
 	reviewDecision := q.Repository.PullRequest.ReviewDecision
+	baseRef := baseRemoteRef(q.Repository.PullRequest.BaseRefName)
 
 	switch {
 	case mergeable == mergeableUnknown || mergeState == mergeableUnknown:
@@ -177,18 +214,20 @@ func attributeResult(result *core.CheckResult, q prMergeabilityQueryStruct, prNu
 
 	case mergeable == "CONFLICTING" || mergeState == "DIRTY":
 		result.Blockers = append(result.Blockers, core.Condition{
-			Kind:            core.ConditionConflict,
-			Severity:        core.SeverityBlocker,
-			Title:           "Branch has merge conflicts",
-			SuggestedAction: "Resolve conflicts: git fetch && git merge origin/<base>, fix conflicts, commit, push.",
+			Kind:     core.ConditionConflict,
+			Severity: core.SeverityBlocker,
+			Title:    "Branch has merge conflicts",
+			SuggestedAction: fmt.Sprintf(
+				"Resolve conflicts: git fetch && git merge %s, fix conflicts, commit, push.", baseRef),
 		})
 
 	case mergeState == "BEHIND":
 		result.Blockers = append(result.Blockers, core.Condition{
-			Kind:            core.ConditionBehindBase,
-			Severity:        core.SeverityBlocker,
-			Title:           "Branch is behind its base branch",
-			SuggestedAction: "Rebase: git fetch && git rebase origin/<base> && git push --force-with-lease.",
+			Kind:     core.ConditionBehindBase,
+			Severity: core.SeverityBlocker,
+			Title:    "Branch is behind its base branch",
+			SuggestedAction: fmt.Sprintf(
+				"Rebase: git fetch && git rebase %s && git push --force-with-lease.", baseRef),
 		})
 
 	case mergeState == "BLOCKED":

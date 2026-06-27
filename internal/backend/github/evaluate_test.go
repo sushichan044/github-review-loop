@@ -326,5 +326,44 @@ func TestBundledEvaluate_StatusContext_PendingRequired_ReturnsCheckPendingBlocke
 	assert.Contains(t, result.Blockers[0].Detail, "deploy-check")
 }
 
+func TestBundledEvaluate_ConflictAndBehind_UseRealBaseRef(t *testing.T) {
+	t.Parallel()
+
+	conflict := newEvalClient(github.ExportedFakePRMergeResult{
+		Mergeable: "CONFLICTING", MergeStateStatus: "DIRTY", BaseRefName: "main",
+	})
+	result, err := github.NewBackend(conflict).BundledEvaluate(context.Background(), pr())
+	require.NoError(t, err)
+	require.Len(t, result.Blockers, 1)
+	assert.Contains(t, result.Blockers[0].SuggestedAction, "origin/main",
+		"conflict action should name the real base ref, not a placeholder")
+
+	behind := newEvalClient(github.ExportedFakePRMergeResult{
+		Mergeable: "MERGEABLE", MergeStateStatus: "BEHIND", BaseRefName: "develop",
+	})
+	result, err = github.NewBackend(behind).BundledEvaluate(context.Background(), pr())
+	require.NoError(t, err)
+	require.Len(t, result.Blockers, 1)
+	assert.Contains(t, result.Blockers[0].SuggestedAction, "origin/develop")
+}
+
+func TestBundledEvaluate_CanceledContext_InterruptsRetryWait(t *testing.T) {
+	t.Parallel()
+
+	// UNKNOWN forces the retry path; a canceled context must abort the wait
+	// instead of sleeping, and BundledEvaluate must return the context error.
+	client := newEvalClient(github.ExportedFakePRMergeResult{
+		Mergeable: "UNKNOWN", MergeStateStatus: "UNKNOWN",
+	})
+	be := github.NewBackend(client, github.WithRetryCount(3))
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // already canceled before the first wait
+
+	_, err := be.BundledEvaluate(ctx, pr())
+	require.Error(t, err)
+	assert.ErrorIs(t, err, context.Canceled)
+}
+
 // noSleep is an injectable sleeper that does nothing, for tests that trigger retry paths.
 func noSleep(_ time.Duration) {}

@@ -23,10 +23,18 @@ type branchRuleResponse struct {
 //
 // Endpoint: GET /repos/{owner}/{repo}/rules/branches/{branch}
 // This is only called lazily by `view --condition rules`.
-func fetchBranchRules(_ context.Context, pr backend.PRCoords) ([]backend.BranchRule, error) {
+//
+// go-gh's REST helpers take no per-request context, so ctx cannot be propagated
+// into the HTTP layer without disproportionate plumbing for this lazy view-only
+// path. Cancellation is instead honored cheaply by checking ctx before each call.
+func fetchBranchRules(ctx context.Context, pr backend.PRCoords) ([]backend.BranchRule, error) {
 	restClient, err := api.DefaultRESTClient()
 	if err != nil {
 		return nil, fmt.Errorf("github rules: cannot create REST client: %w", err)
+	}
+
+	if err = ctx.Err(); err != nil {
+		return nil, err
 	}
 
 	// The branch-rules path needs the PR's base branch name, not the repo name.
@@ -43,6 +51,10 @@ func fetchBranchRules(_ context.Context, pr backend.PRCoords) ([]backend.BranchR
 	baseBranch := prMeta.Base.Ref
 	if baseBranch == "" {
 		return nil, errors.New("github rules: PR response missing base.ref")
+	}
+
+	if err = ctx.Err(); err != nil {
+		return nil, err
 	}
 
 	// Branch refs may contain "/" (e.g. "feature/foo"); escape so the path

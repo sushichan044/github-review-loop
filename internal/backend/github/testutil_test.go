@@ -9,6 +9,7 @@ type FakePRMergeResult struct {
 	MergeStateStatus string
 	ReviewDecision   string
 	HeadRefOid       string
+	BaseRefName      string
 	Checks           []FakeCheck
 	StatusContexts   []FakeStatusContextCheck
 }
@@ -40,6 +41,7 @@ func injectPRMergeResult(q any, r FakePRMergeResult) {
 	query.Repository.PullRequest.MergeStateStatus = r.MergeStateStatus
 	query.Repository.PullRequest.ReviewDecision = r.ReviewDecision
 	query.Repository.PullRequest.HeadRefOid = r.HeadRefOid
+	query.Repository.PullRequest.BaseRefName = r.BaseRefName
 
 	nodes := make([]checkContextNode, 0, len(r.Checks)+len(r.StatusContexts))
 	for _, c := range r.Checks {

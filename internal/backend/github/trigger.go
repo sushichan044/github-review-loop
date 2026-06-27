@@ -52,7 +52,7 @@ func (t *Triggerer) RequestReview(pr PR, policy reviewer.Policy) error {
 	if policy.Trigger != "" {
 		_, _, err := t.exec("pr", "comment", number, "--repo", repo, "--body", policy.Trigger)
 		if err != nil {
-			return fmt.Errorf("failed to post trigger comment for %s: %w", policy.Identity.Name, err)
+			return fmt.Errorf("failed to post trigger comment for %s: %w", IdentityKey(policy.Identity), err)
 		}
 		return nil
 	}
@@ -71,7 +71,7 @@ func (t *Triggerer) RequestReview(pr PR, policy reviewer.Policy) error {
 
 	_, _, err := t.exec("pr", "edit", number, "--repo", repo, "--add-reviewer", handle)
 	if err != nil {
-		return fmt.Errorf("failed to request review from %s: %w", policy.Identity.Name, err)
+		return fmt.Errorf("failed to request review from %s: %w", IdentityKey(policy.Identity), err)
 	}
 	return nil
 }

@@ -3,6 +3,7 @@ package cmd
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -263,26 +264,30 @@ func buildConciseLoopView(
 // review-thread comments via the GraphQL API. REST review comments carry no
 // resolved state, so GraphQL reviewThreads.isResolved is used to filter.
 func reviewerCommentsDrillIn(id reviewer.Identity, pr github.PR) string {
-	// The login is interpolated inside the single-quoted --jq argument; escape any
-	// single quote (config allows arbitrary reviewer names) so it cannot break out.
-	login := shellSingleQuoteEscape(strings.ToLower(reviewerCommentLogin(id)))
+	// Config allows arbitrary reviewer names, so the login is untrusted at two
+	// layers. strconv.Quote makes it a valid jq (JSON) string literal — so a name
+	// containing " or \ cannot break the jq expression — and the whole jq program
+	// is then shell-single-quote-escaped so a name containing ' cannot break out
+	// of the single-quoted --jq argument.
+	loginLiteral := strconv.Quote(strings.ToLower(reviewerCommentLogin(id)))
 	const query = "query($o:String!,$r:String!,$n:Int!){repository(owner:$o,name:$r)" +
 		"{pullRequest(number:$n){reviewThreads(first:100){nodes{isResolved " +
 		"comments(first:1){nodes{author{login} body path line url}}}}}}}"
 	jq := fmt.Sprintf(
 		"[.data.repository.pullRequest.reviewThreads.nodes[] | select(.isResolved==false) "+
-			"| .comments.nodes[] | select(.author.login|ascii_downcase|startswith(\"%s\")) "+
+			"| .comments.nodes[] | select(.author.login|ascii_downcase|startswith(%s)) "+
 			"| {path,line,body,url}]",
-		login,
+		loginLiteral,
 	)
 	return fmt.Sprintf(
 		"gh api graphql -f query='%s' -f o=%s -f r=%s -F n=%d --jq '%s'",
-		query, pr.Owner, pr.Repo, pr.Number, jq,
+		query, pr.Owner, pr.Repo, pr.Number, shellSingleQuoteEscape(jq),
 	)
 }
 
 // shellSingleQuoteEscape makes s safe to embed inside a single-quoted shell
-// argument by replacing each single quote with the '\” close/escape/reopen idiom.
+// argument by replacing each single quote with the close/escape/reopen sequence
+// '\” (close the quote, an escaped single quote, reopen the quote).
 func shellSingleQuoteEscape(s string) string {
 	return strings.ReplaceAll(s, "'", `'\''`)
 }
