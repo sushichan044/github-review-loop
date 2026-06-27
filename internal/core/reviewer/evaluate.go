@@ -99,6 +99,14 @@ func goalMet(p Policy, s Snapshot) bool {
 		// The reviewer looked at the current head and signed off: either an
 		// approval, or a non-changes-requested review with no inline findings.
 		// Resolving threads is NOT enough — the reviewer must re-review cleanly.
+		//
+		// Cleanliness deliberately considers only inline findings, NOT the review
+		// body. We cannot tell a body's findings from boilerplate without parsing
+		// vendor-specific markup, and bots (e.g. CodeRabbit) attach a non-empty
+		// summary body to nearly every review — gating on the body would make the
+		// goal unreachable. Body content is surfaced separately as an advisory
+		// (the "review notes present" line) for a human/agent to read, and never
+		// gates the loop.
 		switch latest.State {
 		case ReviewStateApproved:
 			return true

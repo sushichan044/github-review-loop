@@ -29,7 +29,8 @@ const (
 	// GoalReviewedClean is met when the reviewer's latest non-pending review on the
 	// current head signs off with no outstanding inline findings: either Approved,
 	// or Commented with zero inline comments. Resolving threads is not sufficient —
-	// the reviewer must re-review the latest commit cleanly.
+	// the reviewer must re-review the latest commit cleanly. Only inline findings
+	// count; review-body content is surfaced as an advisory and does not gate.
 	GoalReviewedClean Goal = "reviewed-clean"
 )
 

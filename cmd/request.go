@@ -25,7 +25,8 @@ func newRequestCmd(d deps) *cobra.Command {
   - bare number (e.g. 42): uses the current repo's PR #42
   - GitHub URL (e.g. https://github.com/owner/repo/pull/42)
 
-By default, all reviewers with CanRerequest == true are targeted.
+By default, every configured reviewer is considered: eligible ones are
+re-requested (FIRED) and ineligible ones are reported as SKIP with the reason.
 Use --reviewer type:name to target a single reviewer.
 
 Requires reviewers to be configured in .mergeable-please.yml.`,

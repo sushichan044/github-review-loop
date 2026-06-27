@@ -314,8 +314,9 @@ func reviewerCommentsDrillIn(id reviewer.Identity, pr github.PR) string {
 }
 
 // shellSingleQuoteEscape makes s safe to embed inside a single-quoted shell
-// argument by replacing each single quote with the close/escape/reopen sequence
-// '\” (close the quote, an escaped single quote, reopen the quote).
+// argument: each single quote is replaced by the four-character sequence
+// quote, backslash, quote, quote — i.e. close the quote, emit an escaped
+// quote, then reopen the quote (see the replacement string below).
 func shellSingleQuoteEscape(s string) string {
 	return strings.ReplaceAll(s, "'", `'\''`)
 }
