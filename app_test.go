@@ -396,6 +396,61 @@ func TestApp_Request_NoReviewers_ReturnsError(t *testing.T) {
 	assert.Contains(t, err.Error(), "no reviewers configured")
 }
 
+func TestApp_Request_PartialFailure_ReturnsCollectedOutcomesWithError(t *testing.T) {
+	t.Parallel()
+
+	at := time.Date(2024, 6, 1, 12, 0, 0, 0, time.UTC)
+	aliceIdentity := reviewer.Identity{Type: reviewer.ReviewerTypeUser, Name: "alice"}
+	copilotIdentity := reviewer.Identity{Type: reviewer.ReviewerTypeGitHubCopilot}
+
+	// alice approved on head (goal met → SKIP, collected first), copilot has an
+	// unresolved thread (eligible → fires). The trigger exec fails, so the copilot
+	// re-request errors mid-iteration. The earlier SKIP outcome must still be returned.
+	snapshot := reviewer.Snapshot{
+		HeadCommitOID: "headCommit",
+		Triggers: []reviewer.TriggerAction{
+			{Reviewer: aliceIdentity, At: at.Add(-time.Hour)},
+		},
+		Reviews: []reviewer.Review{
+			{Reviewer: aliceIdentity, State: reviewer.ReviewStateApproved, CommitOID: "headCommit", At: at},
+		},
+		Threads: []reviewer.Thread{
+			{Reviewer: copilotIdentity, Resolved: false},
+		},
+	}
+
+	app := mergeableplease.New(mergeableplease.Deps{
+		Resolver: &fakePRResolver{owner: "myorg", repo: "myrepo", number: 8},
+		FetchSnapshot: func(_ context.Context, _ github.PR, _ []reviewer.Policy) (reviewer.Snapshot, error) {
+			return snapshot, nil
+		},
+		Triggerer:  github.NewTriggererWithExec((&captureExec{err: errors.New("gh exec failed")}).exec),
+		LoadConfig: func() (*config.Config, error) { return minimalConfig(), nil },
+	})
+
+	report, err := app.Request(context.Background(), "", "")
+	require.Error(t, err, "a failed re-request must surface an error")
+	require.NotEmpty(t, report.Outcomes, "outcomes collected before the failure must be returned")
+	assert.Equal(t, "user:alice", report.Outcomes[0].Key)
+	assert.False(t, report.Outcomes[0].Fired)
+}
+
+func TestApp_Reviewers_ResolverError_TakesPrecedence(t *testing.T) {
+	t.Parallel()
+
+	// Both PR resolution and config loading would run, but the PR-resolution
+	// error must surface first — matching the pre-refactor view ordering.
+	app := mergeableplease.New(mergeableplease.Deps{
+		Resolver:   &fakePRResolver{err: errors.New("no PR for branch")},
+		LoadConfig: func() (*config.Config, error) { return minimalConfig(), nil },
+	})
+
+	_, err := app.Reviewers(context.Background(), "")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "could not resolve PR",
+		"resolver failure must take precedence over config loading")
+}
+
 // ---------------------------------------------------------------------------
 // Init tests
 // ---------------------------------------------------------------------------

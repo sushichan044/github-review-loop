@@ -347,6 +347,24 @@ func TestRequest_NoReviewers_ReturnsError(t *testing.T) {
 	assert.Contains(t, err.Error(), "no reviewers configured")
 }
 
+func TestRequest_UnknownReviewerFlag_ReturnsError(t *testing.T) {
+	t.Parallel()
+
+	app := newApp(mergeableplease.Deps{
+		Resolver: &fakePRResolver{owner: "myorg", repo: "myrepo", number: 9},
+		FetchSnapshot: func(_ context.Context, _ github.PR, _ []reviewer.Policy) (reviewer.Snapshot, error) {
+			return reviewer.Snapshot{HeadCommitOID: "headCommit"}, nil
+		},
+		Triggerer:  github.NewTriggererWithExec((&captureExec{}).exec),
+		LoadConfig: func() (*config.Config, error) { return minimalConfig(), nil },
+	})
+
+	var buf bytes.Buffer
+	err := runRequest(context.Background(), runner{app: app, out: &buf}, "user:nonexistent", nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "unknown reviewer")
+}
+
 func TestRequest_PartialFailure_PrintsCollectedOutcomesThenError(t *testing.T) {
 	t.Parallel()
 
@@ -491,4 +509,20 @@ func TestView_ReviewersDimension_NoReviewers_PrintsGuidance(t *testing.T) {
 	require.NoError(t, err)
 	assert.Contains(t, buf.String(), "No reviewers configured",
 		"reviewers dimension must guide the user when no reviewers are configured")
+}
+
+func TestView_ReviewersDimension_ResolverError_TakesPrecedence(t *testing.T) {
+	t.Parallel()
+
+	// Resolver fails; the PR-resolution error must surface before any config or
+	// snapshot work, matching the pre-refactor view ordering.
+	app := newApp(mergeableplease.Deps{
+		Resolver:   &fakePRResolver{err: errors.New("no PR for branch")},
+		LoadConfig: func() (*config.Config, error) { return minimalConfig(), nil },
+	})
+
+	var buf bytes.Buffer
+	err := runView(context.Background(), runner{app: app, out: &buf}, "reviewers", nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "could not resolve PR")
 }

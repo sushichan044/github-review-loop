@@ -2,6 +2,7 @@ package mergeableplease
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/sushichan044/mergeable-please/internal/backend/github"
@@ -58,6 +59,11 @@ func (a *App) resolvePolicies() ([]reviewer.Policy, error) {
 	cfg, err := a.loadConfig()
 	if err != nil {
 		return nil, fmt.Errorf("could not load config: %w", err)
+	}
+	if cfg == nil {
+		// A custom LoadConfig that returns (nil, nil) would otherwise panic in
+		// config.Policies, which dereferences cfg. Fail with an actionable error.
+		return nil, errors.New("could not load config: LoadConfig returned a nil config")
 	}
 
 	policies, err := config.Policies(cfg)
