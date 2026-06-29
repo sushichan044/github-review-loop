@@ -2,11 +2,9 @@ package mergeableplease
 
 import (
 	"context"
-	"errors"
 	"fmt"
 
 	"github.com/sushichan044/mergeable-please/internal/backend/github"
-	"github.com/sushichan044/mergeable-please/internal/config"
 	"github.com/sushichan044/mergeable-please/internal/core/reviewer"
 )
 
@@ -48,25 +46,19 @@ func (a *App) resolvePR(ctx context.Context, arg string) (github.PR, error) {
 	return github.PR{Owner: owner, Repo: repo, Number: number}, nil
 }
 
-// resolvePolicies loads config and extracts reviewer policies.
-// Returns empty policies when no reviewers are configured — not an error.
-// The request command validates non-empty policies separately.
+// resolvePolicies returns the configured reviewer policies via the injected
+// LoadPolicies dependency. Returns empty policies when no reviewers are
+// configured — not an error. The request command validates non-empty policies
+// separately.
+//
+// Policy loading is injected (not done here) so the public API stays decoupled
+// from the config package: the binary wiring owns config loading + mapping.
 func (a *App) resolvePolicies() ([]reviewer.Policy, error) {
-	if a.loadConfig == nil {
-		return nil, errMissingDep("LoadConfig")
+	if a.loadPolicies == nil {
+		return nil, errMissingDep("LoadPolicies")
 	}
 
-	cfg, err := a.loadConfig()
-	if err != nil {
-		return nil, fmt.Errorf("could not load config: %w", err)
-	}
-	if cfg == nil {
-		// A custom LoadConfig that returns (nil, nil) would otherwise panic in
-		// config.Policies, which dereferences cfg. Fail with an actionable error.
-		return nil, errors.New("could not load config: LoadConfig returned a nil config")
-	}
-
-	policies, err := config.Policies(cfg)
+	policies, err := a.loadPolicies()
 	if err != nil {
 		return nil, fmt.Errorf("could not resolve reviewer policies: %w", err)
 	}

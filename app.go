@@ -6,7 +6,6 @@ import (
 
 	"github.com/sushichan044/mergeable-please/internal/backend"
 	"github.com/sushichan044/mergeable-please/internal/backend/github"
-	"github.com/sushichan044/mergeable-please/internal/config"
 	"github.com/sushichan044/mergeable-please/internal/core"
 	"github.com/sushichan044/mergeable-please/internal/core/reviewer"
 )
@@ -21,7 +20,7 @@ type App struct {
 	threadComments   func(ctx context.Context, pr github.PR, policies []reviewer.Policy) (map[string][]github.ThreadComment, error)
 	fetchBranchRules func(ctx context.Context, pr github.PR) ([]backend.BranchRule, error)
 	triggerer        *github.Triggerer
-	loadConfig       func() (*config.Config, error)
+	loadPolicies     func() ([]reviewer.Policy, error)
 	initConfig       func() (string, error)
 }
 
@@ -34,7 +33,7 @@ type Deps struct {
 	ThreadComments   func(ctx context.Context, pr github.PR, policies []reviewer.Policy) (map[string][]github.ThreadComment, error)
 	FetchBranchRules func(ctx context.Context, pr github.PR) ([]backend.BranchRule, error)
 	Triggerer        *github.Triggerer
-	LoadConfig       func() (*config.Config, error)
+	LoadPolicies     func() ([]reviewer.Policy, error)
 	InitConfig       func() (string, error)
 }
 
@@ -56,7 +55,7 @@ func New(d Deps) *App {
 		threadComments:   d.ThreadComments,
 		fetchBranchRules: d.FetchBranchRules,
 		triggerer:        d.Triggerer,
-		loadConfig:       d.LoadConfig,
+		loadPolicies:     d.LoadPolicies,
 		initConfig:       d.InitConfig,
 	}
 }

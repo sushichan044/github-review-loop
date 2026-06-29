@@ -123,8 +123,16 @@ func Execute(w io.Writer) error {
 			be := github.NewGitHubBackendWithClient(client)
 			return be.FetchBranchRules(ctx, backend.PRCoords{Owner: pr.Owner, Repo: pr.Repo, Number: pr.Number})
 		},
-		Triggerer:  github.NewTriggerer(),
-		LoadConfig: loadConfig,
+		Triggerer: github.NewTriggerer(),
+		// config loading + policy mapping stay in the binary wiring so the
+		// public App/Deps surface does not depend on internal/config.
+		LoadPolicies: func() ([]reviewer.Policy, error) {
+			cfg, err := loadConfig()
+			if err != nil {
+				return nil, err
+			}
+			return config.Policies(cfg)
+		},
 		InitConfig: config.Init,
 	})
 

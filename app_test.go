@@ -86,6 +86,12 @@ github:
 `)
 }
 
+// policiesFor builds a LoadPolicies dependency from a parsed config, mirroring
+// the binary's config-to-policies wiring.
+func policiesFor(cfg *config.Config) func() ([]reviewer.Policy, error) {
+	return func() ([]reviewer.Policy, error) { return config.Policies(cfg) }
+}
+
 // ---------------------------------------------------------------------------
 // Check tests
 // ---------------------------------------------------------------------------
@@ -98,7 +104,7 @@ func TestApp_Check_Satisfied(t *testing.T) {
 		BundledEvaluate: func(_ context.Context, _ github.PR) (core.CheckResult, error) {
 			return core.CheckResult{}, nil // no blockers → satisfied after Finalize
 		},
-		LoadConfig: func() (*config.Config, error) { return defaultConfig(), nil },
+		LoadPolicies: policiesFor(defaultConfig()),
 	})
 
 	report, err := app.Check(context.Background(), "")
@@ -118,7 +124,7 @@ func TestApp_Check_Blocked_ResultNotSatisfied(t *testing.T) {
 				},
 			}, nil
 		},
-		LoadConfig: func() (*config.Config, error) { return defaultConfig(), nil },
+		LoadPolicies: policiesFor(defaultConfig()),
 	})
 
 	report, err := app.Check(context.Background(), "")
@@ -146,7 +152,7 @@ func TestApp_Check_ReviewerLoop_NotDone_NotSatisfied(t *testing.T) {
 		FetchSnapshot: func(_ context.Context, _ github.PR, _ []reviewer.Policy) (reviewer.Snapshot, error) {
 			return snapshot, nil
 		},
-		LoadConfig: func() (*config.Config, error) { return minimalConfig(), nil },
+		LoadPolicies: policiesFor(minimalConfig()),
 	})
 
 	report, err := app.Check(context.Background(), "")
@@ -184,7 +190,7 @@ func TestApp_Check_ReviewerLoop_Done_Satisfied(t *testing.T) {
 		FetchSnapshot: func(_ context.Context, _ github.PR, _ []reviewer.Policy) (reviewer.Snapshot, error) {
 			return snapshot, nil
 		},
-		LoadConfig: func() (*config.Config, error) { return minimalConfig(), nil },
+		LoadPolicies: policiesFor(minimalConfig()),
 	})
 
 	report, err := app.Check(context.Background(), "")
@@ -210,7 +216,7 @@ func TestApp_Check_Advisories_DontBlock(t *testing.T) {
 				},
 			}, nil
 		},
-		LoadConfig: func() (*config.Config, error) { return defaultConfig(), nil },
+		LoadPolicies: policiesFor(defaultConfig()),
 	})
 
 	report, err := app.Check(context.Background(), "")
@@ -235,7 +241,7 @@ func TestApp_Check_BareNumber_UsesCurrentRepo(t *testing.T) {
 			capturedPR = pr
 			return core.CheckResult{}, nil
 		},
-		LoadConfig: func() (*config.Config, error) { return defaultConfig(), nil },
+		LoadPolicies: policiesFor(defaultConfig()),
 	})
 
 	_, err := app.Check(context.Background(), "42")
@@ -257,7 +263,7 @@ func TestApp_Check_URL_ParsedDirectly(t *testing.T) {
 			capturedPR = pr
 			return core.CheckResult{}, nil
 		},
-		LoadConfig: func() (*config.Config, error) { return defaultConfig(), nil },
+		LoadPolicies: policiesFor(defaultConfig()),
 	})
 
 	_, err := app.Check(context.Background(), "https://github.com/myorg/myrepo/pull/7")
@@ -299,8 +305,8 @@ func TestApp_Request_FiresOnlyCanRerequest(t *testing.T) {
 		FetchSnapshot: func(_ context.Context, _ github.PR, _ []reviewer.Policy) (reviewer.Snapshot, error) {
 			return snapshot, nil
 		},
-		Triggerer:  triggerer,
-		LoadConfig: func() (*config.Config, error) { return minimalConfig(), nil },
+		Triggerer:    triggerer,
+		LoadPolicies: policiesFor(minimalConfig()),
 	})
 
 	report, err := app.Request(context.Background(), "", "")
@@ -331,8 +337,8 @@ func TestApp_Request_ReviewerFlag_TargetsExactlyOne(t *testing.T) {
 		FetchSnapshot: func(_ context.Context, _ github.PR, _ []reviewer.Policy) (reviewer.Snapshot, error) {
 			return reviewer.Snapshot{HeadCommitOID: "headCommit"}, nil
 		},
-		Triggerer:  triggerer,
-		LoadConfig: func() (*config.Config, error) { return minimalConfig(), nil },
+		Triggerer:    triggerer,
+		LoadPolicies: policiesFor(minimalConfig()),
 	})
 
 	report, err := app.Request(context.Background(), "", "user:alice")
@@ -369,8 +375,8 @@ func TestApp_Request_Blocked_ReturnsSkipOutcome(t *testing.T) {
 		FetchSnapshot: func(_ context.Context, _ github.PR, _ []reviewer.Policy) (reviewer.Snapshot, error) {
 			return snapshot, nil
 		},
-		Triggerer:  triggerer,
-		LoadConfig: func() (*config.Config, error) { return minimalConfig(), nil },
+		Triggerer:    triggerer,
+		LoadPolicies: policiesFor(minimalConfig()),
 	})
 
 	report, err := app.Request(context.Background(), "", "user:alice")
@@ -386,9 +392,9 @@ func TestApp_Request_NoReviewers_ReturnsError(t *testing.T) {
 	t.Parallel()
 
 	app := mergeableplease.New(mergeableplease.Deps{
-		Resolver:   &fakePRResolver{owner: "myorg", repo: "myrepo", number: 11},
-		Triggerer:  github.NewTriggererWithExec((&captureExec{}).exec),
-		LoadConfig: func() (*config.Config, error) { return emptyReviewersConfig(), nil },
+		Resolver:     &fakePRResolver{owner: "myorg", repo: "myrepo", number: 11},
+		Triggerer:    github.NewTriggererWithExec((&captureExec{}).exec),
+		LoadPolicies: policiesFor(emptyReviewersConfig()),
 	})
 
 	_, err := app.Request(context.Background(), "", "")
@@ -424,8 +430,8 @@ func TestApp_Request_PartialFailure_ReturnsCollectedOutcomesWithError(t *testing
 		FetchSnapshot: func(_ context.Context, _ github.PR, _ []reviewer.Policy) (reviewer.Snapshot, error) {
 			return snapshot, nil
 		},
-		Triggerer:  github.NewTriggererWithExec((&captureExec{err: errors.New("gh exec failed")}).exec),
-		LoadConfig: func() (*config.Config, error) { return minimalConfig(), nil },
+		Triggerer:    github.NewTriggererWithExec((&captureExec{err: errors.New("gh exec failed")}).exec),
+		LoadPolicies: policiesFor(minimalConfig()),
 	})
 
 	report, err := app.Request(context.Background(), "", "")
@@ -441,8 +447,8 @@ func TestApp_Reviewers_ResolverError_TakesPrecedence(t *testing.T) {
 	// Both PR resolution and config loading would run, but the PR-resolution
 	// error must surface first — matching the pre-refactor view ordering.
 	app := mergeableplease.New(mergeableplease.Deps{
-		Resolver:   &fakePRResolver{err: errors.New("no PR for branch")},
-		LoadConfig: func() (*config.Config, error) { return minimalConfig(), nil },
+		Resolver:     &fakePRResolver{err: errors.New("no PR for branch")},
+		LoadPolicies: policiesFor(minimalConfig()),
 	})
 
 	_, err := app.Reviewers(context.Background(), "")
@@ -491,8 +497,8 @@ func TestApp_Check_MissingBundledEvaluate_ReturnsError(t *testing.T) {
 	t.Parallel()
 
 	app := mergeableplease.New(mergeableplease.Deps{
-		Resolver:   &fakePRResolver{owner: "org", repo: "repo", number: 1},
-		LoadConfig: func() (*config.Config, error) { return defaultConfig(), nil },
+		Resolver:     &fakePRResolver{owner: "org", repo: "repo", number: 1},
+		LoadPolicies: policiesFor(defaultConfig()),
 	})
 
 	_, err := app.Check(context.Background(), "")
@@ -516,8 +522,8 @@ func TestApp_Reviewers_MissingFetchSnapshot_ReturnsError(t *testing.T) {
 	t.Parallel()
 
 	app := mergeableplease.New(mergeableplease.Deps{
-		Resolver:   &fakePRResolver{owner: "org", repo: "repo", number: 1},
-		LoadConfig: func() (*config.Config, error) { return minimalConfig(), nil },
+		Resolver:     &fakePRResolver{owner: "org", repo: "repo", number: 1},
+		LoadPolicies: policiesFor(minimalConfig()),
 	})
 
 	_, err := app.Reviewers(context.Background(), "")

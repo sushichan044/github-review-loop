@@ -86,6 +86,12 @@ github:
 `)
 }
 
+// policiesFor builds a LoadPolicies dependency from a parsed config, mirroring
+// the binary's config-to-policies wiring.
+func policiesFor(cfg *config.Config) func() ([]reviewer.Policy, error) {
+	return func() ([]reviewer.Policy, error) { return config.Policies(cfg) }
+}
+
 // newApp is a convenience wrapper around mergeableplease.New.
 func newApp(d mergeableplease.Deps) *mergeableplease.App {
 	return mergeableplease.New(d)
@@ -103,7 +109,7 @@ func TestCheck_Satisfied_ExitsZero(t *testing.T) {
 		BundledEvaluate: func(_ context.Context, _ github.PR) (core.CheckResult, error) {
 			return core.CheckResult{Satisfied: true}, nil
 		},
-		LoadConfig: func() (*config.Config, error) { return defaultConfig(), nil },
+		LoadPolicies: policiesFor(defaultConfig()),
 	})
 
 	var buf bytes.Buffer
@@ -124,7 +130,7 @@ func TestCheck_Blocked_ReturnsErrBlocked(t *testing.T) {
 				},
 			}, nil
 		},
-		LoadConfig: func() (*config.Config, error) { return defaultConfig(), nil },
+		LoadPolicies: policiesFor(defaultConfig()),
 	})
 
 	var buf bytes.Buffer
@@ -151,7 +157,7 @@ func TestCheck_WithReviewerLoop_NotDone_ReturnsErrBlocked(t *testing.T) {
 		FetchSnapshot: func(_ context.Context, _ github.PR, _ []reviewer.Policy) (reviewer.Snapshot, error) {
 			return snapshot, nil
 		},
-		LoadConfig: func() (*config.Config, error) { return minimalConfig(), nil },
+		LoadPolicies: policiesFor(minimalConfig()),
 	})
 
 	var buf bytes.Buffer
@@ -186,7 +192,7 @@ func TestCheck_WithReviewerLoop_Done_ExitsZero(t *testing.T) {
 		FetchSnapshot: func(_ context.Context, _ github.PR, _ []reviewer.Policy) (reviewer.Snapshot, error) {
 			return snapshot, nil
 		},
-		LoadConfig: func() (*config.Config, error) { return minimalConfig(), nil },
+		LoadPolicies: policiesFor(minimalConfig()),
 	})
 
 	var buf bytes.Buffer
@@ -210,7 +216,7 @@ func TestCheck_Advisories_AlwaysShown_EvenWhenSatisfied(t *testing.T) {
 				},
 			}, nil
 		},
-		LoadConfig: func() (*config.Config, error) { return defaultConfig(), nil },
+		LoadPolicies: policiesFor(defaultConfig()),
 	})
 
 	var buf bytes.Buffer
@@ -253,8 +259,8 @@ func TestRequest_FiresOnlyCanRerequest(t *testing.T) {
 		FetchSnapshot: func(_ context.Context, _ github.PR, _ []reviewer.Policy) (reviewer.Snapshot, error) {
 			return snapshot, nil
 		},
-		Triggerer:  triggerer,
-		LoadConfig: func() (*config.Config, error) { return minimalConfig(), nil },
+		Triggerer:    triggerer,
+		LoadPolicies: policiesFor(minimalConfig()),
 	})
 
 	var buf bytes.Buffer
@@ -279,8 +285,8 @@ func TestRequest_ReviewerFlag_TargetsExactlyOne(t *testing.T) {
 		FetchSnapshot: func(_ context.Context, _ github.PR, _ []reviewer.Policy) (reviewer.Snapshot, error) {
 			return reviewer.Snapshot{HeadCommitOID: "headCommit"}, nil
 		},
-		Triggerer:  triggerer,
-		LoadConfig: func() (*config.Config, error) { return minimalConfig(), nil },
+		Triggerer:    triggerer,
+		LoadPolicies: policiesFor(minimalConfig()),
 	})
 
 	var buf bytes.Buffer
@@ -318,8 +324,8 @@ func TestRequest_BlockedReviewer_PrintsNoOpReason(t *testing.T) {
 		FetchSnapshot: func(_ context.Context, _ github.PR, _ []reviewer.Policy) (reviewer.Snapshot, error) {
 			return snapshot, nil
 		},
-		Triggerer:  triggerer,
-		LoadConfig: func() (*config.Config, error) { return minimalConfig(), nil },
+		Triggerer:    triggerer,
+		LoadPolicies: policiesFor(minimalConfig()),
 	})
 
 	var buf bytes.Buffer
@@ -336,9 +342,9 @@ func TestRequest_NoReviewers_ReturnsError(t *testing.T) {
 	t.Parallel()
 
 	app := newApp(mergeableplease.Deps{
-		Resolver:   &fakePRResolver{owner: "myorg", repo: "myrepo", number: 11},
-		Triggerer:  github.NewTriggererWithExec((&captureExec{}).exec),
-		LoadConfig: func() (*config.Config, error) { return emptyReviewersConfig(), nil },
+		Resolver:     &fakePRResolver{owner: "myorg", repo: "myrepo", number: 11},
+		Triggerer:    github.NewTriggererWithExec((&captureExec{}).exec),
+		LoadPolicies: policiesFor(emptyReviewersConfig()),
 	})
 
 	var buf bytes.Buffer
@@ -355,8 +361,8 @@ func TestRequest_UnknownReviewerFlag_ReturnsError(t *testing.T) {
 		FetchSnapshot: func(_ context.Context, _ github.PR, _ []reviewer.Policy) (reviewer.Snapshot, error) {
 			return reviewer.Snapshot{HeadCommitOID: "headCommit"}, nil
 		},
-		Triggerer:  github.NewTriggererWithExec((&captureExec{}).exec),
-		LoadConfig: func() (*config.Config, error) { return minimalConfig(), nil },
+		Triggerer:    github.NewTriggererWithExec((&captureExec{}).exec),
+		LoadPolicies: policiesFor(minimalConfig()),
 	})
 
 	var buf bytes.Buffer
@@ -396,8 +402,8 @@ func TestRequest_PartialFailure_PrintsCollectedOutcomesThenError(t *testing.T) {
 		FetchSnapshot: func(_ context.Context, _ github.PR, _ []reviewer.Policy) (reviewer.Snapshot, error) {
 			return snapshot, nil
 		},
-		Triggerer:  triggerer,
-		LoadConfig: func() (*config.Config, error) { return minimalConfig(), nil },
+		Triggerer:    triggerer,
+		LoadPolicies: policiesFor(minimalConfig()),
 	})
 
 	var buf bytes.Buffer
@@ -459,7 +465,7 @@ func TestView_ChecksDimension_NoStatusLine(t *testing.T) {
 				},
 			}, nil
 		},
-		LoadConfig: func() (*config.Config, error) { return defaultConfig(), nil },
+		LoadPolicies: policiesFor(defaultConfig()),
 	})
 
 	var buf bytes.Buffer
@@ -484,7 +490,7 @@ func TestView_ConflictsDimension_NoStatusLine(t *testing.T) {
 				},
 			}, nil
 		},
-		LoadConfig: func() (*config.Config, error) { return defaultConfig(), nil },
+		LoadPolicies: policiesFor(defaultConfig()),
 	})
 
 	var buf bytes.Buffer
@@ -500,8 +506,8 @@ func TestView_ReviewersDimension_NoReviewers_PrintsGuidance(t *testing.T) {
 	t.Parallel()
 
 	app := newApp(mergeableplease.Deps{
-		Resolver:   &fakePRResolver{owner: "org", repo: "repo", number: 1},
-		LoadConfig: func() (*config.Config, error) { return emptyReviewersConfig(), nil },
+		Resolver:     &fakePRResolver{owner: "org", repo: "repo", number: 1},
+		LoadPolicies: policiesFor(emptyReviewersConfig()),
 	})
 
 	var buf bytes.Buffer
@@ -517,8 +523,8 @@ func TestView_ReviewersDimension_ResolverError_TakesPrecedence(t *testing.T) {
 	// Resolver fails; the PR-resolution error must surface before any config or
 	// snapshot work, matching the pre-refactor view ordering.
 	app := newApp(mergeableplease.Deps{
-		Resolver:   &fakePRResolver{err: errors.New("no PR for branch")},
-		LoadConfig: func() (*config.Config, error) { return minimalConfig(), nil },
+		Resolver:     &fakePRResolver{err: errors.New("no PR for branch")},
+		LoadPolicies: policiesFor(minimalConfig()),
 	})
 
 	var buf bytes.Buffer
