@@ -3,8 +3,6 @@ package cmd
 import (
 	"context"
 	"fmt"
-	"strconv"
-	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -241,7 +239,6 @@ func buildConciseLoopView(
 	state reviewer.LoopState,
 	snapshot reviewer.Snapshot,
 	policies []reviewer.Policy,
-	pr github.PR,
 ) output.LoopView {
 	// Count unresolved threads per identity key from the already-fetched snapshot.
 	unresolvedCounts := make(map[string]int)
@@ -272,7 +269,6 @@ func buildConciseLoopView(
 			CanRerequest:    rs.CanRerequest,
 			BlockReason:     rs.BlockReason,
 			UnresolvedCount: unresolvedCounts[key],
-			DrillInCmd:      reviewerCommentsDrillIn(rs.Identity, pr),
 			// Concise mode: surface that a review body exists, but point at the
 			// view command rather than emitting the body drill-in here.
 			ChangesRequested:      rs.ChangesRequested,
@@ -286,49 +282,4 @@ func buildConciseLoopView(
 		Reviewers: reviewerViews,
 		Done:      state.Done,
 	}
-}
-
-// reviewerCommentsDrillIn returns a gh command that reads a reviewer's UNRESOLVED
-// review-thread comments via the GraphQL API. REST review comments carry no
-// resolved state, so GraphQL reviewThreads.isResolved is used to filter.
-func reviewerCommentsDrillIn(id reviewer.Identity, pr github.PR) string {
-	// Config allows arbitrary reviewer names, so the login is untrusted at two
-	// layers. strconv.Quote makes it a valid jq (JSON) string literal — so a name
-	// containing " or \ cannot break the jq expression — and the whole jq program
-	// is then shell-single-quote-escaped so a name containing ' cannot break out
-	// of the single-quoted --jq argument.
-	loginLiteral := strconv.Quote(strings.ToLower(reviewerCommentLogin(id)))
-	const query = "query($o:String!,$r:String!,$n:Int!){repository(owner:$o,name:$r)" +
-		"{pullRequest(number:$n){reviewThreads(first:100){nodes{isResolved " +
-		"comments(first:1){nodes{author{login} body path line url}}}}}}}"
-	jq := fmt.Sprintf(
-		"[.data.repository.pullRequest.reviewThreads.nodes[] | select(.isResolved==false) "+
-			"| .comments.nodes[] | select(.author.login|ascii_downcase|startswith(%s)) "+
-			"| {path,line,body,url}]",
-		loginLiteral,
-	)
-	return fmt.Sprintf(
-		"gh api graphql -f query='%s' -f o=%s -f r=%s -F n=%d --jq '%s'",
-		query, pr.Owner, pr.Repo, pr.Number, shellSingleQuoteEscape(jq),
-	)
-}
-
-// shellSingleQuoteEscape makes s safe to embed inside a single-quoted shell
-// argument: each single quote is replaced by the four-character sequence
-// quote, backslash, quote, quote — i.e. close the quote, emit an escaped
-// quote, then reopen the quote (see the replacement string below).
-func shellSingleQuoteEscape(s string) string {
-	return strings.ReplaceAll(s, "'", `'\''`)
-}
-
-// reviewerCommentLogin returns the expected GitHub comment-author login prefix for a reviewer.
-func reviewerCommentLogin(id reviewer.Identity) string {
-	switch id.Type {
-	case reviewer.ReviewerTypeGitHubCopilot:
-		// Copilot reviews appear under "copilot-pull-request-reviewer"; "copilot" is a safe prefix.
-		return "copilot"
-	case reviewer.ReviewerTypeUser, reviewer.ReviewerTypeGitHubApp:
-		return id.Name
-	}
-	return id.Name
 }

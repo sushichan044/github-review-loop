@@ -44,9 +44,8 @@ type ReviewerView struct {
 	// Full mode (view --condition reviewers): comment bodies.
 	UnresolvedComments []CommentView
 
-	// Concise mode (check): count + drill-in command, no bodies.
-	UnresolvedCount int    // number of unresolved review threads for this reviewer
-	DrillInCmd      string // gh command to fetch this reviewer's unresolved review comments
+	// Concise mode (check): unresolved thread count, no bodies.
+	UnresolvedCount int // number of unresolved review threads for this reviewer
 
 	// ChangesRequested is true when the reviewer's latest review requests changes;
 	// it drives the changes-requested next-action and gates the loop upstream.
@@ -451,14 +450,11 @@ func shortOID(oid string) string {
 	return oid[:n]
 }
 
-// writeReviewerComments renders comment bodies in full mode, or the unresolved
-// count plus a drill-in command in concise mode.
+// writeReviewerComments renders unresolved comment bodies (full mode). The
+// concise check path shows only a count via the task list, not bodies here.
 func writeReviewerComments(w io.Writer, r ReviewerView) error {
 	if len(r.UnresolvedComments) > 0 {
 		return writeFullComments(w, r.UnresolvedComments)
-	}
-	if r.UnresolvedCount > 0 {
-		return writeConciseComments(w, r.UnresolvedCount, r.DrillInCmd)
 	}
 	return nil
 }
@@ -502,17 +498,6 @@ func codeFenceFor(body string) string {
 	}
 	const minFenceLen = 3 // a Markdown code fence is at least three backticks
 	return strings.Repeat("`", max(longest+1, minFenceLen))
-}
-
-func writeConciseComments(w io.Writer, count int, drillIn string) error {
-	if _, err := fmt.Fprintf(w, "- **Unresolved:** %d thread(s)\n", count); err != nil {
-		return err
-	}
-	if drillIn == "" {
-		return nil
-	}
-	_, err := fmt.Fprintf(w, "\nRead the unresolved comments:\n```sh\n%s\n```\n", drillIn)
-	return err
 }
 
 func nextAction(r ReviewerView) string {

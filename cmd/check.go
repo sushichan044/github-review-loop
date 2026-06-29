@@ -65,9 +65,9 @@ func runCheck(ctx context.Context, d deps, args []string) error {
 		result.ReviewerLoop = &loopState
 
 		// Build concise loop view from the already-fetched snapshot.
-		// ThreadComments is NOT called here: check output shows counts + drill-in
-		// commands instead of comment bodies, keeping output token-efficient.
-		lv := buildConciseLoopView(loopState, snapshot, policies, pr)
+		// ThreadComments is NOT called here: check output shows per-reviewer counts
+		// instead of comment bodies, keeping output token-efficient.
+		lv := buildConciseLoopView(loopState, snapshot, policies)
 		loopView = &lv
 	}
 

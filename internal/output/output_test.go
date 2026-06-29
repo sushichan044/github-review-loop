@@ -104,28 +104,13 @@ func TestRender_FullMode_ShowsCommentBodies(t *testing.T) {
 	assert.Contains(t, out, "This looks wrong here.", "full mode renders comment bodies")
 }
 
-func TestRender_ConciseMode_ShowsCountAndDrillIn_NotBodies(t *testing.T) {
-	t.Parallel()
-
-	const drillIn = "gh api graphql -f query='...' --jq '...'"
-	out := renderString(t, output.LoopView{Reviewers: []output.ReviewerView{{
-		Identity: aliceIdentity(), Goal: reviewer.GoalReviewedClean,
-		Phase: reviewer.PhaseActive, RallyCount: 1, MaxRallies: 3,
-		UnresolvedCount: 5, DrillInCmd: drillIn,
-		// UnresolvedComments deliberately empty — concise mode.
-	}}})
-
-	assert.Contains(t, out, "5 thread(s)", "concise mode shows the unresolved count")
-	assert.Contains(t, out, drillIn, "concise mode shows the drill-in command")
-}
-
 func TestRender_Active_WithUnresolved_NextActionIsResolveNotRerequest(t *testing.T) {
 	t.Parallel()
 
 	out := renderString(t, output.LoopView{Reviewers: []output.ReviewerView{{
 		Identity: aliceIdentity(), Goal: reviewer.GoalReviewedClean,
 		Phase: reviewer.PhaseActive, RallyCount: 1, MaxRallies: 5, CanRerequest: true,
-		UnresolvedCount: 2, DrillInCmd: "gh api graphql ...",
+		UnresolvedCount: 2,
 	}}})
 
 	// With unresolved conversations, the next action must be to resolve them —

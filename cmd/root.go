@@ -87,10 +87,9 @@ func Execute(w io.Writer) error {
 	loadConfig := func() (*config.Config, error) {
 		cfgOnce.Do(func() {
 			cachedCfg, cfgErr = config.Load()
-			if cfgErr != nil {
-				cfgErr = fmt.Errorf("could not load config: %w", cfgErr)
-			}
 		})
+		// Return the raw error; resolvePolicies adds the "could not load config"
+		// context once (wrapping here too would duplicate it).
 		return cachedCfg, cfgErr
 	}
 
