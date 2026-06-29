@@ -49,14 +49,17 @@ func (a *App) BranchRules(ctx context.Context, prArg string) (BranchRulesReport,
 // Reviewers fetches reviewer loop state and thread comments for the PR.
 // ReviewerReport.NoReviewers is true when no policies are configured.
 func (a *App) Reviewers(ctx context.Context, prArg string) (ReviewerReport, error) {
-	policies, err := a.resolvePolicies()
-	if err != nil {
-		return ReviewerReport{}, err
-	}
-
+	// Resolve the PR before loading config so that, when both could fail, the
+	// PR-resolution error takes precedence — matching the pre-refactor view
+	// path, which resolved the PR before dispatching to the reviewers branch.
 	pr, err := a.resolvePR(ctx, prArg)
 	if err != nil {
 		return ReviewerReport{}, fmt.Errorf("could not resolve PR: %w", err)
+	}
+
+	policies, err := a.resolvePolicies()
+	if err != nil {
+		return ReviewerReport{}, err
 	}
 
 	if len(policies) == 0 {

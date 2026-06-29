@@ -84,7 +84,10 @@ func selectTargets(
 	return targets
 }
 
-// matchesFlag reports whether the identity matches the "type:name" (or "type") flag value.
+// matchesFlag reports whether the identity's key equals the flag value. The key
+// is "type:name" for named reviewers (e.g. "user:alice") and bare "type" only
+// for nameless identities (e.g. "github-copilot"); passing "user" never matches
+// a named user.
 func matchesFlag(id reviewer.Identity, flag string) bool {
 	return strings.EqualFold(github.IdentityKey(id), flag)
 }
