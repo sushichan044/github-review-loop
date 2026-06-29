@@ -16,6 +16,10 @@ import (
 //     For bare numbers, owner/repo come from [github.PRResolver.CurrentRepo].
 //  2. If arg is empty: delegate to [github.PRResolver.CurrentPR] (current branch).
 func (a *App) resolvePR(ctx context.Context, arg string) (github.PR, error) {
+	if a.resolver == nil {
+		return github.PR{}, errMissingDep("Resolver")
+	}
+
 	if arg != "" {
 		owner, repo, number, err := github.ParsePRArg(arg)
 		if err != nil {
@@ -47,6 +51,10 @@ func (a *App) resolvePR(ctx context.Context, arg string) (github.PR, error) {
 // Returns empty policies when no reviewers are configured — not an error.
 // The request command validates non-empty policies separately.
 func (a *App) resolvePolicies() ([]reviewer.Policy, error) {
+	if a.loadConfig == nil {
+		return nil, errMissingDep("LoadConfig")
+	}
+
 	cfg, err := a.loadConfig()
 	if err != nil {
 		return nil, fmt.Errorf("could not load config: %w", err)

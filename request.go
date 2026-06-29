@@ -22,6 +22,13 @@ func (a *App) Request(ctx context.Context, prArg, reviewerFlag string) (RequestR
 		return RequestReport{}, errors.New("no reviewers configured in .mergeable-please.yml")
 	}
 
+	if a.fetchSnapshot == nil {
+		return RequestReport{}, errMissingDep("FetchSnapshot")
+	}
+	if a.triggerer == nil {
+		return RequestReport{}, errMissingDep("Triggerer")
+	}
+
 	pr, err := a.resolvePR(ctx, prArg)
 	if err != nil {
 		return RequestReport{}, fmt.Errorf("could not resolve PR: %w", err)

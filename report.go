@@ -37,7 +37,7 @@ type ReviewerReport struct {
 	Policies      []reviewer.Policy
 	CommentsByKey map[string][]github.ThreadComment
 	// NoReviewers is true when no reviewer policies are configured.
-	// When true, LoopState, CommentsByKey, and Snapshot are zero values.
+	// When true, LoopState and CommentsByKey are zero values.
 	NoReviewers bool
 }
 

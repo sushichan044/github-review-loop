@@ -423,3 +423,59 @@ func TestApp_Init_PropagatesError(t *testing.T) {
 	require.Error(t, err)
 	assert.ErrorIs(t, err, config.ErrConfigExists)
 }
+
+// ---------------------------------------------------------------------------
+// Missing-dependency guards
+//
+// App is a public API: a required dependency that was never injected must
+// surface as an actionable error from the method that needs it, not a
+// nil-function panic deeper in the call stack.
+// ---------------------------------------------------------------------------
+
+func TestApp_Check_MissingBundledEvaluate_ReturnsError(t *testing.T) {
+	t.Parallel()
+
+	app := mergeableplease.New(mergeableplease.Deps{
+		Resolver:   &fakePRResolver{owner: "org", repo: "repo", number: 1},
+		LoadConfig: func() (*config.Config, error) { return defaultConfig(), nil },
+	})
+
+	_, err := app.Check(context.Background(), "")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "BundledEvaluate")
+}
+
+func TestApp_BranchRules_MissingFetchBranchRules_ReturnsError(t *testing.T) {
+	t.Parallel()
+
+	app := mergeableplease.New(mergeableplease.Deps{
+		Resolver: &fakePRResolver{owner: "org", repo: "repo", number: 1},
+	})
+
+	_, err := app.BranchRules(context.Background(), "")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "FetchBranchRules")
+}
+
+func TestApp_Reviewers_MissingFetchSnapshot_ReturnsError(t *testing.T) {
+	t.Parallel()
+
+	app := mergeableplease.New(mergeableplease.Deps{
+		Resolver:   &fakePRResolver{owner: "org", repo: "repo", number: 1},
+		LoadConfig: func() (*config.Config, error) { return minimalConfig(), nil },
+	})
+
+	_, err := app.Reviewers(context.Background(), "")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "FetchSnapshot")
+}
+
+func TestApp_Init_MissingInitConfig_ReturnsError(t *testing.T) {
+	t.Parallel()
+
+	app := mergeableplease.New(mergeableplease.Deps{})
+
+	_, err := app.Init()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "InitConfig")
+}

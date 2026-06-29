@@ -10,6 +10,10 @@ import (
 // Evaluate calls bundledEvaluate without running the reviewer loop or calling
 // Finalize. Used by the view command for checks/conflicts/default modes.
 func (a *App) Evaluate(ctx context.Context, prArg string) (EvaluateReport, error) {
+	if a.bundledEvaluate == nil {
+		return EvaluateReport{}, errMissingDep("BundledEvaluate")
+	}
+
 	pr, err := a.resolvePR(ctx, prArg)
 	if err != nil {
 		return EvaluateReport{}, fmt.Errorf("could not resolve PR: %w", err)
@@ -24,8 +28,11 @@ func (a *App) Evaluate(ctx context.Context, prArg string) (EvaluateReport, error
 }
 
 // BranchRules fetches branch rules for the PR's base branch.
-// fetchBranchRules is assumed non-nil; it is always injected in production.
 func (a *App) BranchRules(ctx context.Context, prArg string) (BranchRulesReport, error) {
+	if a.fetchBranchRules == nil {
+		return BranchRulesReport{}, errMissingDep("FetchBranchRules")
+	}
+
 	pr, err := a.resolvePR(ctx, prArg)
 	if err != nil {
 		return BranchRulesReport{}, fmt.Errorf("could not resolve PR: %w", err)
@@ -54,6 +61,13 @@ func (a *App) Reviewers(ctx context.Context, prArg string) (ReviewerReport, erro
 
 	if len(policies) == 0 {
 		return ReviewerReport{PR: pr, Policies: policies, NoReviewers: true}, nil
+	}
+
+	if a.fetchSnapshot == nil {
+		return ReviewerReport{}, errMissingDep("FetchSnapshot")
+	}
+	if a.threadComments == nil {
+		return ReviewerReport{}, errMissingDep("ThreadComments")
 	}
 
 	snapshot, err := a.fetchSnapshot(ctx, pr, policies)
