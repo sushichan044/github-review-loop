@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"sync"
 
@@ -125,13 +126,19 @@ func Execute(w io.Writer) error {
 		},
 		Triggerer: github.NewTriggerer(),
 		// config loading + policy mapping stay in the binary wiring so the
-		// public App/Deps surface does not depend on internal/config.
+		// public App/Deps surface does not depend on internal/config. The error
+		// context lives here (not in resolvePolicies) to preserve the original
+		// user-facing messages.
 		LoadPolicies: func() ([]reviewer.Policy, error) {
 			cfg, err := loadConfig()
 			if err != nil {
-				return nil, err
+				return nil, fmt.Errorf("could not load config: %w", err)
 			}
-			return config.Policies(cfg)
+			policies, err := config.Policies(cfg)
+			if err != nil {
+				return nil, fmt.Errorf("could not resolve reviewer policies: %w", err)
+			}
+			return policies, nil
 		},
 		InitConfig: config.Init,
 	})

@@ -2,7 +2,6 @@ package mergeableplease
 
 import (
 	"context"
-	"fmt"
 
 	"github.com/sushichan044/mergeable-please/internal/backend/github"
 	"github.com/sushichan044/mergeable-please/internal/core/reviewer"
@@ -58,10 +57,8 @@ func (a *App) resolvePolicies() ([]reviewer.Policy, error) {
 		return nil, errMissingDep("LoadPolicies")
 	}
 
-	policies, err := a.loadPolicies()
-	if err != nil {
-		return nil, fmt.Errorf("could not resolve reviewer policies: %w", err)
-	}
-
-	return policies, nil
+	// Return the loader error as-is: the binary's LoadPolicies owns the
+	// user-facing context (config-load vs policy-mapping), preserving the
+	// pre-refactor error text.
+	return a.loadPolicies()
 }
