@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -346,6 +347,48 @@ func TestRequest_NoReviewers_ReturnsError(t *testing.T) {
 	assert.Contains(t, err.Error(), "no reviewers configured")
 }
 
+func TestRequest_PartialFailure_PrintsCollectedOutcomesThenError(t *testing.T) {
+	t.Parallel()
+
+	at := time.Date(2024, 6, 1, 12, 0, 0, 0, time.UTC)
+	aliceIdentity := reviewer.Identity{Type: reviewer.ReviewerTypeUser, Name: "alice"}
+	copilotIdentity := reviewer.Identity{Type: reviewer.ReviewerTypeGitHubCopilot}
+
+	// alice has approved on head (goal met → SKIP), copilot has an unresolved
+	// thread (eligible → fires). The trigger exec fails, so the copilot
+	// re-request errors mid-iteration. The earlier SKIP must still be printed.
+	snapshot := reviewer.Snapshot{
+		HeadCommitOID: "headCommit",
+		Triggers: []reviewer.TriggerAction{
+			{Reviewer: aliceIdentity, At: at.Add(-time.Hour)},
+		},
+		Reviews: []reviewer.Review{
+			{Reviewer: aliceIdentity, State: reviewer.ReviewStateApproved, CommitOID: "headCommit", At: at},
+		},
+		Threads: []reviewer.Thread{
+			{Reviewer: copilotIdentity, Resolved: false},
+		},
+	}
+
+	exec := &captureExec{err: errors.New("gh exec failed")}
+	triggerer := github.NewTriggererWithExec(exec.exec)
+
+	app := newApp(mergeableplease.Deps{
+		Resolver: &fakePRResolver{owner: "myorg", repo: "myrepo", number: 7},
+		FetchSnapshot: func(_ context.Context, _ github.PR, _ []reviewer.Policy) (reviewer.Snapshot, error) {
+			return snapshot, nil
+		},
+		Triggerer:  triggerer,
+		LoadConfig: func() (*config.Config, error) { return minimalConfig(), nil },
+	})
+
+	var buf bytes.Buffer
+	err := runRequest(context.Background(), runner{app: app, out: &buf}, "", nil)
+	require.Error(t, err, "a failed re-request must surface an error")
+	assert.Contains(t, buf.String(), "SKIP  user:alice",
+		"outcomes collected before the failure must still be printed")
+}
+
 // ---------------------------------------------------------------------------
 // init command tests
 // ---------------------------------------------------------------------------
@@ -433,4 +476,19 @@ func TestView_ConflictsDimension_NoStatusLine(t *testing.T) {
 	assert.NotContains(t, out, "status:", "dimension view must never emit a global status line")
 	assert.Contains(t, out, "conflict", "conflict condition must appear")
 	assert.NotContains(t, out, "check-failing", "check condition must be filtered out for conflicts dimension")
+}
+
+func TestView_ReviewersDimension_NoReviewers_PrintsGuidance(t *testing.T) {
+	t.Parallel()
+
+	app := newApp(mergeableplease.Deps{
+		Resolver:   &fakePRResolver{owner: "org", repo: "repo", number: 1},
+		LoadConfig: func() (*config.Config, error) { return emptyReviewersConfig(), nil },
+	})
+
+	var buf bytes.Buffer
+	err := runView(context.Background(), runner{app: app, out: &buf}, "reviewers", nil)
+	require.NoError(t, err)
+	assert.Contains(t, buf.String(), "No reviewers configured",
+		"reviewers dimension must guide the user when no reviewers are configured")
 }

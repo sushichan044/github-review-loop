@@ -46,11 +46,10 @@ func runRequest(ctx context.Context, r runner, reviewerFlag string, args []strin
 		prArg = args[0]
 	}
 
-	report, err := r.app.Request(ctx, prArg, reviewerFlag)
-	if err != nil {
-		return err
-	}
+	report, reqErr := r.app.Request(ctx, prArg, reviewerFlag)
 
+	// Print every collected outcome — even when Request failed mid-iteration —
+	// so per-reviewer progress stays visible, then surface the error.
 	for _, outcome := range report.Outcomes {
 		if !outcome.Fired {
 			if _, wErr := fmt.Fprintf(r.out, "SKIP  %s — %s\n", outcome.Key, outcome.BlockReason); wErr != nil {
@@ -63,5 +62,5 @@ func runRequest(ctx context.Context, r runner, reviewerFlag string, args []strin
 		}
 	}
 
-	return nil
+	return reqErr
 }

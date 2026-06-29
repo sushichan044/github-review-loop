@@ -13,6 +13,9 @@ import (
 // Request fires review re-requests for eligible reviewers and returns a structured [RequestReport].
 // reviewerFlag limits re-requests to a single reviewer ("type:name" or "type");
 // pass "" to target all configured reviewers.
+//
+// On a mid-iteration failure the returned RequestReport still carries the
+// outcomes collected before the error, so callers can render partial progress.
 func (a *App) Request(ctx context.Context, prArg, reviewerFlag string) (RequestReport, error) {
 	policies, err := a.resolvePolicies()
 	if err != nil {
@@ -46,12 +49,11 @@ func (a *App) Request(ctx context.Context, prArg, reviewerFlag string) (RequestR
 		return RequestReport{}, fmt.Errorf("unknown reviewer %q", reviewerFlag)
 	}
 
+	// fireRequests may return outcomes collected before a mid-iteration failure.
+	// Surface them alongside the error so the CLI can still render partial
+	// progress, matching the pre-refactor streaming output.
 	outcomes, err := a.fireRequests(pr, targets)
-	if err != nil {
-		return RequestReport{}, err
-	}
-
-	return RequestReport{PR: pr, Outcomes: outcomes}, nil
+	return RequestReport{PR: pr, Outcomes: outcomes}, err
 }
 
 // reviewerTarget pairs a reviewer.State with its reviewer.Policy.
@@ -109,7 +111,9 @@ func (a *App) fireRequests(pr github.PR, targets []reviewerTarget) ([]RequestOut
 		}
 
 		if err := a.triggerer.RequestReview(pr, t.policy); err != nil {
-			return nil, fmt.Errorf("failed to request review from %s: %w", key, err)
+			// Return the outcomes gathered so far so the caller can render the
+			// reviewers already processed before this failure.
+			return outcomes, fmt.Errorf("failed to request review from %s: %w", key, err)
 		}
 
 		outcomes = append(outcomes, RequestOutcome{
