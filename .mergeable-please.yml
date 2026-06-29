@@ -1,0 +1,41 @@
+# mergeable-please configuration (repository root: .mergeable-please.yml)
+#
+# This file is optional. With no config, `mergeable-please check` still evaluates
+# conflicts and ruleset/CI using the defaults below. Reviewer quality loops are
+# opt-in: list them under `github.reviewers` to have the tool drive AI review
+# tools to their goal before merge.
+
+git:
+  # Remote used to reason about the base branch. (default: origin)
+  remote: origin
+  # Treat unresolved conflicts with the base branch as a blocker. (default: true)
+  # On GitHub this is derived efficiently from the PR mergeStateStatus.
+  conflicts-resolved: true
+
+github:
+  # Evaluate GitHub's own merge-eligibility gate (required CI checks, ruleset
+  # blockers). Conditions an AI can fix are reported as blockers; human-gated
+  # ones (approval, signed commits, ...) are reported as advisories. (default: true)
+  rulesets: true
+
+  # Reviewer quality loop (opt-in). Each reviewer is looped until its goal is met
+  # or max-rallies is exhausted.
+  reviewers:
+    - type: github-copilot
+      goal:
+        reviewed-clean: true
+      max-rallies: 5
+    
+
+    # - type: user
+    #   name: your-login
+    #   goal:
+    #     approved: true
+    #   max-rallies: 5
+
+    - type: github-app
+      name: coderabbitai
+      goal:
+        reviewed-clean: true
+      max-rallies: 5
+      trigger: "@coderabbitai review"

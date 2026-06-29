@@ -1,0 +1,44 @@
+# .mergeable-please.yml — mergeable-please configuration
+#
+# Commit this file so every collaborator and CI runs the same policy.
+# All fields have defaults; running `mergeable-please check` works without this file.
+#
+# git:
+#   remote: origin           # remote name used for conflict detection (default: origin)
+#   conflicts-resolved: true # check for merge conflicts (default: true)
+#
+# github:
+#   rulesets: true           # check branch rulesets and required CI (default: true)
+#
+#   # reviewers: reviewer-quality loop (opt-in, empty by default).
+#   # Each entry loops until the reviewer reaches their goal or exhausts max-rallies.
+#   # goal (exactly one):
+#   #   approved: true        # reviewer approved the current head
+#   #   reviewed-clean: true  # reviewer signed off on the current head with no
+#   #                         # inline findings (approved, or commented with 0 inline)
+#   reviewers:
+#     - type: github-copilot
+#       goal:
+#         reviewed-clean: true
+#       max-rallies: 5
+#
+#     # - type: github-app
+#     #   name: coderabbitai
+#     #   goal:
+#     #     approved: true
+#     #   max-rallies: 5
+#     #   trigger: "@coderabbitai review"
+#
+#     # - type: user
+#     #   name: your-login
+#     #   goal:
+#     #     approved: true
+#     #   max-rallies: 5
+
+git:
+  remote: origin
+  conflicts-resolved: true
+
+github:
+  rulesets: true
+  reviewers: []
